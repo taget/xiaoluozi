@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小落子</title>
+  <style>
+    :root {
+      --paper: #f6f1e8;
+      --sheet: #fffdf8;
+      --ink: #241c16;
+      --muted: #6f655b;
+      --line: #e3d9cc;
+      --seal: #8f3228;
+      --seal-ink: #fff8f2;
+      --warn-bg: #f4ead0;
+      --warn-ink: #6a4b16;
+      --fail-bg: #f8e6e1;
+      --fail-ink: #6e2e26;
+      --shadow: 0 18px 50px rgba(60, 40, 20, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse at top, #fbf7f0 0%, var(--paper) 55%, #ebe3d6 100%);
+      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.5;
+    }
+
+    .desk {
+      width: min(40rem, calc(100% - 1.5rem));
+      margin: 0 auto;
+      padding: 1.25rem 0 2rem;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      column-gap: 0.9rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .seal {
+      width: 3.1rem;
+      height: 3.1rem;
+      display: grid;
+      place-items: center;
+      border-radius: 0.35rem;
+      background: var(--seal);
+      color: var(--seal-ink);
+      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
+      font-size: 1.7rem;
+      letter-spacing: 0;
+      box-shadow: inset 0 0 0 2px rgba(255, 248, 242, 0.35);
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
+      font-size: 1.85rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .lede {
+      margin: 0.15rem 0 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .banner {
+      margin: 0 0 0.9rem;
+      padding: 0.75rem 0.9rem;
+      border-radius: 0.7rem;
+      background: var(--warn-bg);
+      color: var(--warn-ink);
+      font-size: 0.92rem;
+    }
+
+    .sheet {
+      flex: 1;
+      background: var(--sheet);
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      box-shadow: var(--shadow);
+      padding: 1.1rem 1rem 0.9rem;
+      display: flex;
+      flex-direction: column;
+      min-height: 24rem;
+    }
+
+    #thread {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .empty {
+      margin: auto;
+      max-width: 16rem;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .turn { display: flex; flex-direction: column; gap: 0.35rem; }
+
+    .who {
+      margin: 0;
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .said, .reply, .pending, .fail {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .said {
+      padding-bottom: 0.65rem;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    .reply { font-size: 1.05rem; }
+
+    .pending { color: var(--muted); }
+
+    .fail {
+      padding: 0.65rem 0.75rem;
+      border-radius: 0.65rem;
+      background: var(--fail-bg);
+      color: var(--fail-ink);
+    }
+
+    .note {
+      margin: 0.2rem 0 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    form {
+      display: flex;
+      gap: 0.55rem;
+      margin-top: 1rem;
+    }
+
+    label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+
+    input {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 0.75rem 1rem;
+      font: inherit;
+      font-size: 1rem;
+    }
+
+    input:focus {
+      outline: 2px solid rgba(143, 50, 40, 0.35);
+      border-color: var(--seal);
+    }
+
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 0.75rem 1.1rem;
+      background: var(--seal);
+      color: var(--seal-ink);
+      font: inherit;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.65;
+    }
+
+    @media (max-width: 640px) {
+      .desk { width: min(100% - 1rem, 40rem); padding-top: 0.8rem; }
+      .sheet { min-height: 70vh; border-radius: 0.8rem; }
+      h1 { font-size: 1.6rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="desk">
+    <header>
+      <div class="seal" aria-hidden="true">落</div>
+      <div>
+        <h1>小落子</h1>
+        <p class="lede">一句话进来，我回你一句。</p>
+      </div>
+    </header>
+    <p id="banner" class="banner" hidden></p>
+    <section class="sheet">
+      <div id="thread" aria-live="polite">
+        <p id="empty" class="empty">还没有对话。写下一句想说的话。</p>
+      </div>
+      <form id="composer">
+        <label for="message">想说的话</label>
+        <input id="message" name="message" autocomplete="off" placeholder="写一句你想说的话" enterkeyhint="send">
+        <button id="send" type="submit">发送</button>
+      </form>
+      <p id="form-error" class="note" hidden></p>
+    </section>
+  </div>
+  <script>
+    const banner = document.getElementById("banner");
+    const thread = document.getElementById("thread");
+    const empty = document.getElementById("empty");
+    const form = document.getElementById("composer");
+    const input = document.getElementById("message");
+    const send = document.getElementById("send");
+    const formError = document.getElementById("form-error");
+
+    function showBanner(text) {
+      banner.hidden = false;
+      banner.textContent = text;
+    }
+
+    async function loadStatus() {
+      send.disabled = true;
+      try {
+        const response = await fetch("/api/status");
+        if (!response.ok) throw new Error("status");
+        const data = await response.json();
+        if (data.model_configured) {
+          banner.hidden = true;
+          banner.textContent = "";
+        } else {
+          showBanner("模型还没配好。设置 TYPESAFE_API_KEY 之后，这句话才能得到回复。");
+        }
+      } catch (err) {
+        showBanner("暂时没能确认模型是否配好。");
+      } finally {
+        send.disabled = false;
+      }
+    }
+
+    function clearEmpty() {
+      if (empty.parentNode) empty.remove();
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = input.value.trim();
+      if (!message) {
+        formError.hidden = false;
+        formError.textContent = "先写一句话。";
+        input.focus();
+        return;
+      }
+      formError.hidden = true;
+      clearEmpty();
+      input.value = "";
+      send.disabled = true;
+      input.disabled = true;
+
+      const turn = document.createElement("article");
+      turn.className = "turn";
+      const who = document.createElement("p");
+      who.className = "who";
+      who.textContent = "你";
+      const said = document.createElement("p");
+      said.className = "said";
+      said.textContent = message;
+      const pending = document.createElement("p");
+      pending.className = "pending";
+      pending.textContent = "正在回复…";
+      turn.append(who, said, pending);
+      thread.append(turn);
+      thread.scrollIntoView({ block: "end" });
+
+      try {
+        const response = await fetch("/api/handle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message })
+        });
+        let data = {};
+        try { data = await response.json(); } catch (err) { data = {}; }
+        pending.remove();
+        if (!response.ok) {
+          const fail = document.createElement("p");
+          fail.className = "fail";
+          fail.textContent = data.error || "没能回复。";
+          turn.append(fail);
+        } else {
+          const reply = document.createElement("p");
+          reply.className = "reply";
+          reply.textContent = data.reply || "";
+          turn.append(reply);
+          if (data.note) {
+            const note = document.createElement("p");
+            note.className = "note";
+            note.textContent = data.note;
+            turn.append(note);
+          }
+        }
+      } catch (err) {
+        pending.remove();
+        const fail = document.createElement("p");
+        fail.className = "fail";
+        fail.textContent = "没能连上工作台。";
+        turn.append(fail);
+      } finally {
+        send.disabled = false;
+        input.disabled = false;
+        input.focus();
+      }
+    });
+
+    loadStatus();
+  </script>
+</body>
+</html>
