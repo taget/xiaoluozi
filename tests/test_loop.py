@@ -1,92 +1,84 @@
-import json
-
-from tests.fakes import FakeMemory, FakeModel
+from tests.fakes import FakeLlm, FakeMemory, FakeModel, SpyAgent
+from xiaoluozi.history import History
 from xiaoluozi.agents.chat import ChatAgent
 from xiaoluozi.errors import MemoryError, ModelError, ModelNotConfigured, ReplyError
-from xiaoluozi.loop import COGNITION_FAILED, Loop
+from xiaoluozi.loop import Loop
 from xiaoluozi.registry import Registry
-from xiaoluozi.router import Router
+from xiaoluozi.router import INTENT_UNKNOWN, Router
 
 
-def _prompt_text(messages):
-    return "\n".join(message["content"] for message in messages)
+def _route_answer(agent="chat", intent="decide"):
+    return {
+        "agent_id": {"type": "choice", "choice": agent},
+        "intent": {"type": "choice", "choice": intent},
+    }
 
 
-def _loop(model, memory, *, model_configured=True):
-    registry = Registry([ChatAgent(model)])
+def _loop(model, memory, llm=None, *, model_configured=True, history=None):
+    llm = llm or FakeLlm("带伞。")
+    registry = Registry([ChatAgent(llm)])
     return Loop(
         registry=registry,
         router=Router(model, registry),
         model=model,
         memory=memory,
         model_configured=model_configured,
+        history=history,
     )
 
 
-def test_loop_order_is_route_then_reply_then_cognition_then_retain():
-    model = FakeModel(
-        [
-            json.dumps({"agent_id": "chat", "reason": "日常对话"}, ensure_ascii=False),
-            "带伞比较好。",
-            "用户决定出门要带伞。",
-        ]
-    )
-    memory = FakeMemory()
-    result = _loop(model, memory).handle("今天要不要出门")
+def test_loop_asks_laya_then_passes_context_and_intent_to_the_agent(capsys):
+    model = FakeModel([_route_answer()])
+    llm = FakeLlm("带伞。")
+    memory = FakeMemory(memories=["上次说要出门"])
+    result = _loop(model, memory, llm).handle("今天要不要出门")
 
-    assert result.text == "带伞比较好。"
+    assert result.text == f"带伞。\n\n选用 chat。依据：{ChatAgent.description}"
     assert result.saved is True
     assert result.note is None
-    assert len(model.calls) == 3
-    route_prompt = _prompt_text(model.calls[0])
-    reply_prompt = _prompt_text(model.calls[1])
-    cognition_prompt = _prompt_text(model.calls[2])
-    assert "chat" in route_prompt
-    assert "agent_id" in route_prompt
-    assert "今天要不要出门" in reply_prompt
-    assert "带伞比较好。" in cognition_prompt
-    assert "带伞比较好。" not in route_prompt
-    assert len(memory.turns) == 1
+    assert len(model.calls) == 1
+    state = model.calls[0]["state"]
+    assert "用户问题：今天要不要出门" in state
+    assert "上次说要出门" in state
+    assert "- chat：" in state
+    assert model.calls[0]["questions"]["agent_id"]["type"] == "choice"
+    assert model.calls[0]["questions"]["intent"]["criteria"]["decide"] == "在拿主意"
+    assert "上次说要出门" in llm.calls[0]["message"]
+    assert "用户意图：在拿主意" in llm.calls[0]["message"]
+    assert "用户问题：今天要不要出门" in llm.calls[0]["message"]
     turn = memory.turns[0]
     assert turn.user_message == "今天要不要出门"
     assert turn.agent_id == "chat"
-    assert turn.reason == "日常对话"
-    assert turn.reply == "带伞比较好。"
-    assert turn.cognition == "用户决定出门要带伞。"
-    assert turn.turn_id
+    assert turn.reason == ChatAgent.description
+    assert turn.reply == "带伞。"
+    assert turn.cognition == "在拿主意"
+    logged = capsys.readouterr().err
+    assert "回路开始 今天要不要出门" in logged
+    assert "回路意图 在拿主意" in logged
+    assert "回路回复 agent_id=chat 带伞。" in logged
+    assert f"选用 chat。依据：{ChatAgent.description}" in logged
+    assert f"回路写入 turn_id={turn.turn_id} saved=true" in logged
 
 
-def test_cognition_failure_still_returns_the_reply_and_retains_a_failure_note():
-    model = FakeModel(
-        [
-            json.dumps({"agent_id": "chat", "reason": "日常对话"}, ensure_ascii=False),
-            "带伞比较好。",
-            ModelError("认知服务超时"),
-        ]
-    )
+def test_missing_intent_still_returns_the_reply():
+    model = FakeModel([{"agent_id": {"type": "choice", "choice": "chat"}}])
+    llm = FakeLlm("带伞。")
     memory = FakeMemory()
-    result = _loop(model, memory).handle("今天要不要出门")
+    result = _loop(model, memory, llm).handle("今天要不要出门")
 
-    assert result.text == "带伞比较好。"
+    assert result.text.startswith("带伞。\n\n选用 chat。依据：")
     assert result.saved is True
-    assert memory.turns[0].reply == "带伞比较好。"
-    assert memory.turns[0].cognition == COGNITION_FAILED
-    assert memory.turns[0].user_message == "今天要不要出门"
-    assert memory.turns[0].agent_id == "chat"
+    assert memory.turns[0].reply == "带伞。"
+    assert memory.turns[0].cognition == INTENT_UNKNOWN
+    assert "用户意图：没有识别出意图。" in llm.calls[0]["message"]
 
 
 def test_retain_failure_still_returns_the_reply():
-    model = FakeModel(
-        [
-            json.dumps({"agent_id": "chat", "reason": "日常对话"}, ensure_ascii=False),
-            "带伞比较好。",
-            "用户决定出门要带伞。",
-        ]
-    )
+    model = FakeModel([_route_answer()])
     memory = FakeMemory(error=MemoryError("Hindsight 连不上"))
     result = _loop(model, memory).handle("今天要不要出门")
 
-    assert result.text == "带伞比较好。"
+    assert result.text.startswith("带伞。\n\n选用 chat。依据：")
     assert result.saved is False
     assert result.note
     assert memory.attempts == 1
@@ -94,32 +86,38 @@ def test_retain_failure_still_returns_the_reply():
 
 
 def test_reply_failure_is_not_retained():
-    model = FakeModel(
-        [
-            json.dumps({"agent_id": "chat", "reason": "日常对话"}, ensure_ascii=False),
-            ModelError("模型调用失败"),
-            "不该抽出认知",
-        ]
-    )
+    model = FakeModel([_route_answer()])
     memory = FakeMemory()
 
     try:
-        _loop(model, memory).handle("今天要不要出门")
+        _loop(model, memory, FakeLlm(error=ModelError("模型调用失败"))).handle("今天要不要出门")
     except ReplyError as exc:
         assert "模型调用失败" in str(exc)
     else:
         raise AssertionError("reply failure must surface")
 
     assert memory.attempts == 0
-    assert len(model.calls) == 2
+    assert len(model.calls) == 1
 
 
 def test_route_call_failure_is_not_retained():
     model = FakeModel([ModelError("连不上模型服务。")])
     memory = FakeMemory()
+    registry = Registry(
+        [
+            ChatAgent(FakeLlm()),
+            SpyAgent("notes", "把一句话记成备忘。"),
+        ]
+    )
+    loop = Loop(
+        registry=registry,
+        router=Router(model, registry),
+        model=model,
+        memory=memory,
+    )
 
     try:
-        _loop(model, memory).handle("你好")
+        loop.handle("你好")
     except ModelError as exc:
         assert "连不上模型服务" in str(exc)
     else:
@@ -127,6 +125,29 @@ def test_route_call_failure_is_not_retained():
 
     assert memory.attempts == 0
     assert len(model.calls) == 1
+    assert len(model.calls[0]["questions"]["agent_id"]["criteria"]) >= 2
+    assert "intent" in model.calls[0]["questions"]
+
+
+def test_chosen_agent_receives_the_context_and_intent():
+    model = FakeModel([_route_answer("notes", "tell")])
+    memory = FakeMemory(memories=["用户出门要带伞"])
+    notes = SpyAgent("notes", "把一句话记成备忘。")
+    registry = Registry([ChatAgent(FakeLlm()), notes])
+    result = Loop(
+        registry=registry,
+        router=Router(model, registry),
+        model=model,
+        memory=memory,
+    ).handle("帮我记一下")
+
+    assert result.text == "spy-reply\n\n选用 notes。依据：把一句话记成备忘。"
+    assert notes.requests == [
+        {"message": "帮我记一下", "context": "用户出门要带伞", "intent": "在说一件事"}
+    ]
+    assert "用户问题：帮我记一下" in model.calls[0]["state"]
+    assert "用户出门要带伞" in model.calls[0]["state"]
+    assert memory.queries == ["帮我记一下"]
 
 
 def test_missing_model_does_not_invent_a_reply():
@@ -142,3 +163,25 @@ def test_missing_model_does_not_invent_a_reply():
 
     assert model.calls == []
     assert memory.attempts == 0
+
+
+def test_web_and_weixin_share_the_same_recent_dialogue():
+    history = History(None)
+    model = FakeModel([_route_answer(), _route_answer(intent="ask")])
+    llm = FakeLlm("带伞。")
+    memory = FakeMemory(memories=["上次说要出门"])
+    loop = _loop(model, memory, llm, history=history)
+
+    loop.handle("今天要不要出门", channel="web")
+    loop.handle("明天呢", channel="weixin")
+
+    state = model.calls[1]["state"]
+    assert "网页 / 用户：今天要不要出门" in state
+    assert "网页 / 小落子：带伞。" in state
+    assert "上次说要出门" in state
+    assert "明天呢" in llm.calls[1]["message"]
+    assert "网页 / 用户：今天要不要出门" in llm.calls[1]["message"]
+    turns = history.turns()
+    assert [turn.channel for turn in turns] == ["web", "weixin"]
+    assert turns[1].user_message == "明天呢"
+    assert memory.turns[1].channel == "weixin"

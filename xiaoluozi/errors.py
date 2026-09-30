@@ -3,7 +3,7 @@ class WorkbenchError(Exception):
 
 
 class ModelNotConfigured(WorkbenchError):
-    """TYPESAFE_API_KEY is missing. Do not call the model."""
+    """TYPESAFE_API_KEY is missing from .env. Do not call the model."""
 
 
 class ModelError(WorkbenchError):

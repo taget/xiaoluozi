@@ -17,7 +17,7 @@ def _turn():
     )
 
 
-def test_hindsight_retain_posts_four_tagged_items_sharing_turn_id():
+def test_hindsight_retain_posts_four_tagged_items_sharing_turn_id(capsys):
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -25,7 +25,7 @@ def test_hindsight_retain_posts_four_tagged_items_sharing_turn_id():
         seen["body"] = json.loads(request.content.decode())
         return httpx.Response(
             200,
-            json={"success": True, "bank_id": "bank-1", "items_count": 4, "async": False},
+            json={"success": True, "bank_id": "bank-1", "items_count": 1, "async": False},
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -35,22 +35,20 @@ def test_hindsight_retain_posts_four_tagged_items_sharing_turn_id():
     body = seen["body"]
     assert body["async"] is False
     items = body["items"]
-    assert len(items) == 4
-    assert [item["metadata"]["kind"] for item in items] == [
-        "user",
-        "routing",
-        "assistant",
-        "cognition",
-    ]
-    assert {item["metadata"]["turn_id"] for item in items} == {"turn-1"}
-    for item in items:
-        assert "turn_id:turn-1" in item["tags"]
-        assert item["document_id"] == "turn-1"
-    assert items[0]["content"] == "今天要不要出门"
-    assert "chat" in items[1]["content"]
-    assert "日常对话" in items[1]["content"]
-    assert items[2]["content"] == "带伞比较好。"
-    assert items[3]["content"] == "用户决定出门要带伞。"
+    assert len(items) == 1
+    item = items[0]
+    assert item["document_id"] == "turn-1"
+    assert item["metadata"] == {"turn_id": "turn-1", "agent_id": "chat", "kind": "turn"}
+    assert "turn_id:turn-1" in item["tags"]
+    assert "用户: 今天要不要出门" in item["content"]
+    assert "agent_id=chat" in item["content"]
+    assert "reason=日常对话" in item["content"]
+    assert "回复: 带伞比较好。" in item["content"]
+    assert "认知: 用户决定出门要带伞。" in item["content"]
+    logged = capsys.readouterr().err
+    assert "记忆请求 POST http://hindsight.local/v1/default/banks/bank-1/memories" in logged
+    assert "记忆响应 200" in logged
+    assert "今天要不要出门" in logged
 
 
 def test_hindsight_unset_does_not_call_the_network():

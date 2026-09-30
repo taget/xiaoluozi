@@ -210,6 +210,7 @@
       <div>
         <h1>小落子</h1>
         <p class="lede">一句话进来，我回你一句。</p>
+        <p id="channel-note" class="lede" hidden></p>
       </div>
     </header>
     <p id="banner" class="banner" hidden></p>
@@ -227,12 +228,14 @@
   </div>
   <script>
     const banner = document.getElementById("banner");
+    const channelNote = document.getElementById("channel-note");
     const thread = document.getElementById("thread");
-    const empty = document.getElementById("empty");
     const form = document.getElementById("composer");
     const input = document.getElementById("message");
     const send = document.getElementById("send");
     const formError = document.getElementById("form-error");
+    let sending = false;
+    let holdError = false;
 
     function showBanner(text) {
       banner.hidden = false;
@@ -249,7 +252,11 @@
           banner.hidden = true;
           banner.textContent = "";
         } else {
-          showBanner("模型还没配好。设置 TYPESAFE_API_KEY 之后，这句话才能得到回复。");
+          showBanner("模型还没配好。在 .env 里设置 TYPESAFE_API_KEY 之后，这句话才能得到回复。");
+        }
+        if (data.weixin_configured) {
+          channelNote.hidden = false;
+          channelNote.textContent = "微信和这个页面是同一段对话。";
         }
       } catch (err) {
         showBanner("暂时没能确认模型是否配好。");
@@ -258,8 +265,50 @@
       }
     }
 
-    function clearEmpty() {
-      if (empty.parentNode) empty.remove();
+    function renderHistory(turns) {
+      thread.replaceChildren();
+      if (!turns.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.id = "empty";
+        empty.textContent = "还没有对话。写下一句想说的话。";
+        thread.append(empty);
+        return;
+      }
+      for (const turn of turns) {
+        const article = document.createElement("article");
+        article.className = "turn";
+        const who = document.createElement("p");
+        who.className = "who";
+        who.textContent = turn.channel === "weixin" ? "微信" : "你";
+        const said = document.createElement("p");
+        said.className = "said";
+        said.textContent = turn.user || "";
+        const reply = document.createElement("p");
+        reply.className = "reply";
+        reply.textContent = turn.reply || "";
+        article.append(who, said, reply);
+        if (turn.note) {
+          const note = document.createElement("p");
+          note.className = "note";
+          note.textContent = turn.note;
+          article.append(note);
+        }
+        thread.append(article);
+      }
+      thread.lastElementChild.scrollIntoView({ block: "end" });
+    }
+
+    async function loadHistory() {
+      if (sending || holdError) return;
+      try {
+        const response = await fetch("/api/history");
+        if (!response.ok) return;
+        const data = await response.json();
+        renderHistory(data.turns || []);
+      } catch (err) {
+        /* 下一轮再取。 */
+      }
     }
 
     form.addEventListener("submit", async (event) => {
@@ -272,8 +321,11 @@
         return;
       }
       formError.hidden = true;
-      clearEmpty();
+      holdError = false;
+      const empty = document.getElementById("empty");
+      if (empty) empty.remove();
       input.value = "";
+      sending = true;
       send.disabled = true;
       input.disabled = true;
 
@@ -302,29 +354,24 @@
         try { data = await response.json(); } catch (err) { data = {}; }
         pending.remove();
         if (!response.ok) {
+          holdError = true;
           const fail = document.createElement("p");
           fail.className = "fail";
           fail.textContent = data.error || "没能回复。";
           turn.append(fail);
         } else {
-          const reply = document.createElement("p");
-          reply.className = "reply";
-          reply.textContent = data.reply || "";
-          turn.append(reply);
-          if (data.note) {
-            const note = document.createElement("p");
-            note.className = "note";
-            note.textContent = data.note;
-            turn.append(note);
-          }
+          sending = false;
+          await loadHistory();
         }
       } catch (err) {
+        holdError = true;
         pending.remove();
         const fail = document.createElement("p");
         fail.className = "fail";
         fail.textContent = "没能连上工作台。";
         turn.append(fail);
       } finally {
+        sending = false;
         send.disabled = false;
         input.disabled = false;
         input.focus();
@@ -332,6 +379,8 @@
     });
 
     loadStatus();
+    loadHistory();
+    setInterval(loadHistory, 3000);
   </script>
 </body>
 </html>

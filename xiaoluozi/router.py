@@ -1,61 +1,109 @@
 import json
 
+from xiaoluozi.log import get_logger
 from xiaoluozi.registry import Registry
 
+logger = get_logger("xiaoluozi.router")
 FALLBACK_ID = "chat"
+NONE_ID = "none"
+INTENT_UNKNOWN = "没有识别出意图。"
+INTENTS = {
+    "ask": "在提问",
+    "decide": "在拿主意",
+    "tell": "在说一件事",
+    "greet": "在寒暄",
+}
 
 
 class RoutingDecision:
-    def __init__(self, agent_id: str, reason: str):
+    def __init__(self, agent_id: str, reason: str, intent: str = INTENT_UNKNOWN):
         self.agent_id = agent_id
         self.reason = reason
+        self.intent = intent
 
 
 class Router:
-    """Ask laya which agent should take the sentence. Do not run the agent."""
+    """Ask laya which enabled agent should take the sentence. Do not run the agent."""
 
-    def __init__(self, model, registry: Registry):
+    def __init__(self, model, registry: Registry, *, default_agent: str = FALLBACK_ID, selectable=None):
         self._model = model
         self._registry = registry
+        self._default_agent = default_agent or FALLBACK_ID
+        self._selectable = selectable
 
-    def route(self, message: str) -> RoutingDecision:
-        listing = "\n".join(
-            f"- {agent_id}: {description}" for agent_id, description in self._registry.listing()
+    def route(self, message: str, context: str = "") -> RoutingDecision:
+        agents = self._agents()
+        if not agents:
+            return _decide(self._default_agent, "没有其他代理可选。", "没有可启用的代理。")
+        criteria = {agent_id: description for agent_id, description in agents}
+        criteria[NONE_ID] = "没有合适的代理。"
+        answers = self._model.decide(
+            routing_state(message, context, agents),
+            {
+                "agent_id": {
+                    "type": "choice",
+                    "instructions": "从后端代理里选一个处理这句话。没有合适的就选 none。",
+                    "criteria": criteria,
+                },
+                "intent": {
+                    "type": "choice",
+                    "instructions": "用户这句话的意图是什么？",
+                    "criteria": dict(INTENTS),
+                },
+            },
         )
-        system = (
-            "你是路由器。根据用户的一句话，从下列代理里选一个。\n"
-            "只输出 JSON，不要输出其它文字："
-            '{"agent_id": "...", "reason": "..."}\n\n'
-            "代理：\n"
-            f"{listing}"
-        )
-        raw = self._model.complete(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": message},
-            ]
-        )
-        return parse_route(raw, self._registry.ids())
+        return decision_from_answers(answers, criteria, self._default_agent)
+
+    def _agents(self) -> list[tuple[str, str]]:
+        listing = self._registry.listing()
+        if self._selectable is None:
+            return listing
+        by_id = dict(listing)
+        return [(agent_id, by_id[agent_id]) for agent_id in self._selectable if agent_id in by_id]
 
 
-def parse_route(raw: str, known_ids: set[str]) -> RoutingDecision:
-    try:
-        data = json.loads(raw.strip())
-    except (json.JSONDecodeError, AttributeError):
-        return RoutingDecision(FALLBACK_ID, "路由结果不是合法 JSON，已回退到 chat。")
-    if not isinstance(data, dict):
-        return RoutingDecision(FALLBACK_ID, "路由结果不是合法 JSON，已回退到 chat。")
-    agent_id = data.get("agent_id")
-    reason = data.get("reason")
-    if (
-        not isinstance(agent_id, str)
-        or not isinstance(reason, str)
-        or not agent_id.strip()
-        or not reason.strip()
-    ):
-        return RoutingDecision(FALLBACK_ID, "路由结果不是合法 JSON，已回退到 chat。")
-    agent_id = agent_id.strip()
-    reason = reason.strip()
-    if agent_id not in known_ids:
-        return RoutingDecision(FALLBACK_ID, f"未知代理 {agent_id}，已回退到 chat。")
-    return RoutingDecision(agent_id, reason)
+def routing_state(message: str, context: str, agents: list[tuple[str, str]]) -> str:
+    """What laya reads: the question, the current context, and the configured agents."""
+    context_text = context.strip() or "没有可用的上下文。"
+    lines = "\n".join(f"- {agent_id}：{description}" for agent_id, description in agents)
+    return f"用户问题：{message}\n\n当前上下文：\n{context_text}\n\n后端代理：\n{lines}"
+
+
+def decision_from_answers(answers, criteria: dict[str, str], default_agent: str = FALLBACK_ID) -> RoutingDecision:
+    raw = answers if isinstance(answers, str) else json.dumps(answers, ensure_ascii=False)
+    intent = _intent_label(answers)
+    choice = _choice(answers)
+    if choice is None or choice == NONE_ID:
+        return _decide(default_agent, f"没有合适的代理，已回退到 {default_agent}。", raw, intent)
+    if choice not in criteria:
+        return _decide(default_agent, f"未知代理 {choice}，已回退到 {default_agent}。", raw, intent)
+    return _decide(choice, criteria[choice], raw, intent)
+
+
+def _choice(answers):
+    if not isinstance(answers, dict):
+        return None
+    item = answers.get("agent_id")
+    if not isinstance(item, dict):
+        return None
+    choice = item.get("choice")
+    if not isinstance(choice, str) or not choice.strip():
+        return None
+    return choice.strip()
+
+
+def _intent_label(answers) -> str:
+    if not isinstance(answers, dict):
+        return INTENT_UNKNOWN
+    item = answers.get("intent")
+    if not isinstance(item, dict):
+        return INTENT_UNKNOWN
+    choice = item.get("choice")
+    if not isinstance(choice, str):
+        return INTENT_UNKNOWN
+    return INTENTS.get(choice.strip(), INTENT_UNKNOWN)
+
+
+def _decide(agent_id: str, reason: str, raw: str, intent: str = INTENT_UNKNOWN) -> RoutingDecision:
+    logger.info("路由决定 agent_id=%s intent=%s reason=%s raw=%s", agent_id, intent, reason, raw)
+    return RoutingDecision(agent_id, reason, intent)

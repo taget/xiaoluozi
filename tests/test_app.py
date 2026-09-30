@@ -12,8 +12,10 @@ class StubLoop:
         self.error = error
         self.messages = []
 
-    def handle(self, message):
+    def handle(self, message, channel="web"):
         self.messages.append(message)
+        self.channels = getattr(self, "channels", [])
+        self.channels.append(channel)
         if self.error:
             raise self.error
         return self.result
@@ -35,7 +37,7 @@ def test_status_reports_model_missing():
     response = client.get("/api/status")
 
     assert response.status_code == 200
-    assert response.json() == {"model_configured": False}
+    assert response.json() == {"model_configured": False, "weixin_configured": False}
 
 
 def test_page_error_is_not_a_successful_reply():
@@ -50,7 +52,7 @@ def test_page_error_is_not_a_successful_reply():
     assert loop.messages == ["你好"]
 
 
-def test_handle_response_is_only_the_reply_and_optional_save_note():
+def test_handle_response_is_only_the_reply_and_optional_save_note(capsys):
     loop = StubLoop(result=Reply(text="带伞比较好。", saved=False, note="这一轮没有存进记忆。"))
     client = TestClient(create_app(loop=loop, model_configured=True))
     response = client.post("/api/handle", json={"message": "今天要不要出门"})
@@ -61,6 +63,11 @@ def test_handle_response_is_only_the_reply_and_optional_save_note():
         "saved": False,
         "note": "这一轮没有存进记忆。",
     }
+    logged = capsys.readouterr().err
+    assert "请求 POST /api/handle 今天要不要出门" in logged
+    assert "入口接受 channel=web 今天要不要出门" in logged
+    assert "响应 200 POST /api/handle" in logged
+    assert "带伞比较好。" in logged
 
 
 def test_model_error_is_shown_as_an_error():

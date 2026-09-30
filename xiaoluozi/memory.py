@@ -1,9 +1,13 @@
+import json
 from dataclasses import dataclass
 from urllib.parse import quote
 
 import httpx
 
 from xiaoluozi.errors import MemoryError
+from xiaoluozi.log import get_logger
+
+logger = get_logger("xiaoluozi.memory")
 
 
 @dataclass(frozen=True)
@@ -14,13 +18,15 @@ class TurnRecord:
     reason: str
     reply: str
     cognition: str
+    channel: str = "web"
 
 
 class HindsightMemory:
-    """Retain one turn through Hindsight's current memories API.
+    """Write one turn to an already-deployed Hindsight bank.
 
     POST {base}/v1/default/banks/{bank_id}/memories
-    The loop only sees retain_turn; it does not see this request.
+    Recall feeds the laya routing state. Retain writes one turn.
+    Model-call injection stays on wrap_openai.
     """
 
     def __init__(self, base_url: str, bank_id: str, client: httpx.Client | None = None):
@@ -30,14 +36,53 @@ class HindsightMemory:
         if self._client is None and self._base_url and self._bank_id:
             self._client = httpx.Client(timeout=20.0)
 
+    def recall(self, query: str) -> list[str]:
+        text = query.strip()
+        if not text or not self._base_url or not self._bank_id or self._client is None:
+            return []
+        url = f"{self._bank_url()}/memories/recall"
+        payload = {"query": text, "budget": "mid"}
+        logger.info("记忆请求 POST %s\n%s", url, json.dumps(payload, ensure_ascii=False))
+        try:
+            response = self._client.post(url, json=payload)
+        except httpx.HTTPError as exc:
+            logger.info("记忆请求失败 %s %s", url, exc)
+            return []
+        logger.info("记忆响应 %s %s\n%s", response.status_code, url, response.text)
+        if response.status_code >= 400:
+            return []
+        try:
+            results = response.json().get("results")
+        except Exception:
+            return []
+        if not isinstance(results, list):
+            return []
+        memories = []
+        for item in results:
+            if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"].strip():
+                memories.append(item["text"].strip())
+        return memories
+
     def retain_turn(self, turn: TurnRecord) -> None:
         if not self._base_url or not self._bank_id:
+            logger.info("记忆请求被拒绝 未配置 turn_id=%s", turn.turn_id)
             raise MemoryError("记忆服务未配置。")
-        url = f"{self._base_url}/v1/default/banks/{quote(self._bank_id, safe='')}/memories"
+        self._retain(_payload(turn))
+
+    def _bank_url(self) -> str:
+        return f"{self._base_url}/v1/default/banks/{quote(self._bank_id, safe='')}"
+
+    def _retain(self, payload: dict) -> None:
+        if not self._base_url or not self._bank_id or self._client is None:
+            raise MemoryError("记忆服务未配置。")
+        url = f"{self._bank_url()}/memories"
+        logger.info("记忆请求 POST %s\n%s", url, json.dumps(payload, ensure_ascii=False))
         try:
-            response = self._client.post(url, json=_payload(turn))
+            response = self._client.post(url, json=payload)
         except httpx.HTTPError as exc:
+            logger.info("记忆请求失败 %s %s", url, exc)
             raise MemoryError("记忆没有写入。") from exc
+        logger.info("记忆响应 %s %s\n%s", response.status_code, url, response.text)
         if response.status_code >= 400:
             raise MemoryError("记忆没有写入。")
         try:
@@ -49,21 +94,34 @@ class HindsightMemory:
 
 
 def _payload(turn: TurnRecord) -> dict:
-    kinds = (
-        ("user", turn.user_message),
-        ("routing", f"agent_id: {turn.agent_id}\nreason: {turn.reason}"),
-        ("assistant", turn.reply),
-        ("cognition", turn.cognition),
+    """One conversation document per turn.
+
+    Hindsight upserts by document_id, so splitting a turn into several items
+    that share an id would delete the earlier ones. The transcript keeps the
+    user text, the routing decision, and the model reply together.
+    """
+    content = "\n".join(
+        [
+            f"通道: { '微信' if turn.channel == 'weixin' else '网页' }",
+            f"用户: {turn.user_message}",
+            f"路由: agent_id={turn.agent_id} reason={turn.reason}",
+            f"回复: {turn.reply}",
+            f"认知: {turn.cognition}",
+        ]
     )
-    items = []
-    for kind, content in kinds:
-        items.append(
+    return {
+        "async": False,
+        "items": [
             {
                 "content": content,
-                "context": f"xiaoluozi {kind}",
+                "context": "xiaoluozi 一轮对话",
                 "document_id": turn.turn_id,
-                "tags": [f"turn_id:{turn.turn_id}", f"kind:{kind}"],
-                "metadata": {"turn_id": turn.turn_id, "kind": kind},
+                "tags": [f"turn_id:{turn.turn_id}", "kind:turn", f"channel:{turn.channel}"],
+                "metadata": {
+                    "turn_id": turn.turn_id,
+                    "agent_id": turn.agent_id,
+                    "kind": "turn",
+                },
             }
-        )
-    return {"async": False, "items": items}
+        ],
+    }

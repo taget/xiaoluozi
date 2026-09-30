@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .env
+data/
 agent-tools/
 dist/
 *.egg-info/

@@ -6,8 +6,8 @@ class FakeModel:
         self.script = list(script)
         self.calls = []
 
-    def complete(self, messages):
-        self.calls.append(messages)
+    def decide(self, state, questions):
+        self.calls.append({"state": state, "questions": questions})
         if not self.script:
             raise AssertionError("unexpected model call")
         item = self.script.pop(0)
@@ -17,10 +17,16 @@ class FakeModel:
 
 
 class FakeMemory:
-    def __init__(self, error=None):
+    def __init__(self, error=None, memories=None):
         self.error = error
         self.turns = []
         self.attempts = 0
+        self.memories = list(memories or [])
+        self.queries = []
+
+    def recall(self, query):
+        self.queries.append(query)
+        return list(self.memories)
 
     def retain_turn(self, turn):
         self.attempts += 1
@@ -29,12 +35,27 @@ class FakeMemory:
         self.turns.append(turn)
 
 
+class FakeLlm:
+    def __init__(self, text="带伞。", error=None):
+        self.text = text
+        self.error = error
+        self.calls = []
+
+    def answer(self, system, message):
+        self.calls.append({"system": system, "message": message})
+        if self.error is not None:
+            raise self.error
+        return self.text
+
+
 class SpyAgent:
     def __init__(self, agent_id, description):
         self.id = agent_id
         self.description = description
         self.handled = []
+        self.requests = []
 
-    def handle(self, message):
+    def handle(self, message, *, context="", intent=""):
         self.handled.append(message)
+        self.requests.append({"message": message, "context": context, "intent": intent})
         return "spy-reply"
