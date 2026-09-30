@@ -26,7 +26,7 @@ xiaoluozi = "xiaoluozi.__main__:main"
 include = ["xiaoluozi*"]
 
 [tool.setuptools.package-data]
-xiaoluozi = ["page.html"]
+xiaoluozi = ["page.html", "skills/*/SKILL.md", "skills/*/references/*", "skills/*/scripts/*", "skills/*/assets/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

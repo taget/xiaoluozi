@@ -10,6 +10,7 @@ from xiaoluozi.memory import HindsightMemory
 from xiaoluozi.model import ClosedLlm, ClosedModel, JevClient, LlmClient, LoggingOpenAI, chat_base_url
 from xiaoluozi.registry import Registry
 from xiaoluozi.router import Router
+from xiaoluozi.skills import SkillCatalog
 
 
 def build_loop(settings: Settings | None = None, history: History | None = None) -> Loop:
@@ -32,9 +33,10 @@ def build_loop(settings: Settings | None = None, history: History | None = None)
 
 
 def _registry(settings: Settings, llm):
+    skills = SkillCatalog()
     catalog = {
-        "chat": ChatAgent(llm),
-        "qa": QaAgent(llm),
+        "chat": ChatAgent(llm, skills.load(ChatAgent.skill_ids)),
+        "qa": QaAgent(llm, skills.load(QaAgent.skill_ids)),
     }
     if settings.default_agent not in catalog:
         raise ValueError(f"未知的默认代理 {settings.default_agent}。")
