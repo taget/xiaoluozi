@@ -3,6 +3,7 @@ import json
 import httpx
 
 from xiaoluozi.errors import MemoryError
+from xiaoluozi.loop import QueuedDecision
 from xiaoluozi.memory import HindsightMemory, TurnRecord
 
 
@@ -63,3 +64,28 @@ def test_hindsight_unset_does_not_call_the_network():
         pass
     else:
         raise AssertionError("unset Hindsight must fail the retain")
+
+
+def test_a_full_decision_queue_is_one_memory_document():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"success": True})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    HindsightMemory("http://hindsight.local", "bank-1", client=client).retain_decisions(
+        [
+            QueuedDecision("今天出门吗", "chat", "日常对话", "在拿主意"),
+            QueuedDecision("明天呢", "chat", "日常对话", "在提问"),
+        ]
+    )
+
+    items = seen["body"]["items"]
+    assert len(items) == 1
+    assert items[0]["metadata"]["kind"] == "decision-queue"
+    assert items[0]["metadata"]["agent_id"] == "chat"
+    assert "agent:chat" in items[0]["tags"]
+    assert "1. 用户: 今天出门吗" in items[0]["content"]
+    assert "2. 用户: 明天呢" in items[0]["content"]
+    assert items[0]["document_id"]

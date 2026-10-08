@@ -14,7 +14,7 @@ def _route_answer(agent="chat", intent="decide"):
     }
 
 
-def _loop(model, memory, llm=None, *, model_configured=True, history=None):
+def _loop(model, memory, llm=None, *, model_configured=True, history=None, decision_limit=10):
     llm = llm or FakeLlm("带伞。")
     registry = Registry([ChatAgent(llm)])
     return Loop(
@@ -24,6 +24,7 @@ def _loop(model, memory, llm=None, *, model_configured=True, history=None):
         memory=memory,
         model_configured=model_configured,
         history=history,
+        decision_limit=decision_limit,
     )
 
 
@@ -39,7 +40,7 @@ def test_loop_asks_laya_then_passes_context_and_intent_to_the_agent(capsys):
     assert len(model.calls) == 1
     state = model.calls[0]["state"]
     assert "用户问题：今天要不要出门" in state
-    assert "上次说要出门" in state
+    assert "上次说要出门" not in state
     assert "- chat：" in state
     assert model.calls[0]["questions"]["agent_id"]["type"] == "choice"
     assert model.calls[0]["questions"]["intent"]["criteria"]["decide"] == "在拿主意"
@@ -54,6 +55,9 @@ def test_loop_asks_laya_then_passes_context_and_intent_to_the_agent(capsys):
     assert turn.cognition == "在拿主意"
     logged = capsys.readouterr().err
     assert "回路开始 今天要不要出门" in logged
+    assert "决策依赖\n今天要不要出门" in logged
+    assert logged.index("决策依赖") < logged.index("路由决定")
+    assert "上下文记忆 agent_id=chat\n上次说要出门" in logged
     assert "回路意图 在拿主意" in logged
     assert "回路回复 agent_id=chat 带伞。" in logged
     assert f"选用 chat。依据：{ChatAgent.description}" in logged
@@ -146,8 +150,9 @@ def test_chosen_agent_receives_the_context_and_intent():
         {"message": "帮我记一下", "context": "用户出门要带伞", "intent": "在说一件事"}
     ]
     assert "用户问题：帮我记一下" in model.calls[0]["state"]
-    assert "用户出门要带伞" in model.calls[0]["state"]
+    assert "用户出门要带伞" not in model.calls[0]["state"]
     assert memory.queries == ["帮我记一下"]
+    assert memory.agent_ids == ["notes"]
 
 
 def test_missing_model_does_not_invent_a_reply():
@@ -165,6 +170,159 @@ def test_missing_model_does_not_invent_a_reply():
     assert memory.attempts == 0
 
 
+def test_revise_context_is_what_laya_and_the_agent_see():
+    class Revising(Loop):
+        def _revise_context(self, message, context):
+            return "只留这一句。"
+
+    model = FakeModel([_route_answer()])
+    llm = FakeLlm("带伞。")
+    memory = FakeMemory(memories=["上次说要出门"])
+    base = _loop(model, memory, llm)
+    loop = Revising(
+        registry=base.registry,
+        router=base.router,
+        model=base.model,
+        memory=base.memory,
+        history=History(None),
+    )
+    loop.history.append(
+        channel="web",
+        agent_id="chat",
+        user_message="昨天出门了",
+        reply="带了伞。",
+        shown="带了伞。",
+        note=None,
+    )
+
+    loop.handle("今天呢")
+
+    assert "只留这一句。" not in model.calls[0]["state"]
+    assert "用户问题：今天呢" in model.calls[0]["state"]
+    assert "上次说要出门" not in model.calls[0]["state"]
+    assert "当前上下文：\n只留这一句。" in llm.calls[0]["message"]
+
+
+def test_decision_queue_keeps_items_until_it_is_full():
+    model = FakeModel([_route_answer(), _route_answer(intent="ask"), _route_answer()])
+    memory = FakeMemory()
+    loop = _loop(model, memory, decision_limit=2)
+
+    loop.handle("今天出门吗")
+    assert loop.refresh_decisions("chat") is False
+    assert memory.decision_batches == []
+    assert loop.decision_at("chat", 0).message == "今天出门吗"
+    assert loop.decision_at("chat", 0).agent_id == "chat"
+    assert loop.decision_at("chat", 0).intent == "在拿主意"
+
+    loop.handle("明天呢")
+
+    assert memory.decision_batches[0][0].message == "今天出门吗"
+    assert memory.decision_batches[0][1].intent == "在提问"
+    try:
+        loop.decision_at("chat", 0)
+    except IndexError as exc:
+        assert "没有第 0 条" in str(exc)
+    else:
+        raise AssertionError("a flushed queue must be empty")
+
+    loop.handle("后天呢")
+    assert loop.decision_at("chat", 0).message == "后天呢"
+    assert len(memory.decision_batches) == 1
+
+
+def test_full_decision_queue_stays_when_memory_rejects_it():
+    class Rejecting(FakeMemory):
+        def retain_decisions(self, decisions):
+            raise MemoryError("队列没写上")
+
+    loop = _loop(FakeModel([_route_answer()]), Rejecting(), decision_limit=1)
+
+    result = loop.handle("今天出门吗")
+
+    assert result.saved is True
+    assert loop.decision_at("chat", 0).message == "今天出门吗"
+    assert loop.refresh_decisions("chat") is False
+
+
+def test_each_agent_keeps_its_own_decision_queue():
+    model = FakeModel([_route_answer("chat"), _route_answer("qa"), _route_answer("chat")])
+    memory = FakeMemory()
+    chat = SpyAgent("chat", "日常对话。")
+    qa = SpyAgent("qa", "回答问题。")
+    registry = Registry([chat, qa])
+    loop = Loop(
+        registry=registry,
+        router=Router(model, registry),
+        model=model,
+        memory=memory,
+        decision_limit=2,
+    )
+
+    loop.handle("今天出门吗")
+    loop.handle("为什么要带伞")
+
+    assert loop.decision_at("chat", 0).message == "今天出门吗"
+    assert loop.decision_at("qa", 0).message == "为什么要带伞"
+    assert memory.decision_batches == []
+
+    loop.handle("明天呢")
+
+    assert [item.agent_id for item in memory.decision_batches[0]] == ["chat", "chat"]
+    assert loop.decision_at("qa", 0).message == "为什么要带伞"
+    try:
+        loop.decision_at("chat", 0)
+    except IndexError as exc:
+        assert "chat" in str(exc)
+    else:
+        raise AssertionError("only the full agent queue is cleared")
+
+
+def test_repeated_decision_stays_out_of_the_queue():
+    model = FakeModel([_route_answer(), _route_answer()])
+    loop = _loop(model, FakeMemory())
+
+    loop.handle("今天出门吗")
+    loop.handle("明天呢")
+
+    assert loop.decision_at("chat", 0).message == "今天出门吗"
+    try:
+        loop.decision_at("chat", 1)
+    except IndexError:
+        pass
+    else:
+        raise AssertionError("the same decision must not be queued twice")
+
+
+def test_failed_route_reuses_the_latest_decision_without_enqueue():
+    model = FakeModel([_route_answer(), ModelError("连不上模型服务。")])
+    llm = FakeLlm("带伞。")
+    loop = _loop(model, FakeMemory(), llm)
+
+    loop.handle("今天出门吗")
+    result = loop.handle("明天呢")
+
+    assert result.text.startswith("带伞。")
+    assert "选用 chat。" in result.text
+    assert loop.decision_at("chat", 0).message == "今天出门吗"
+    try:
+        loop.decision_at("chat", 1)
+    except IndexError:
+        pass
+    else:
+        raise AssertionError("a reused decision must not be queued")
+    assert "明天呢" in llm.calls[1]["message"]
+
+
+def test_decision_queue_limit_must_be_positive():
+    try:
+        _loop(FakeModel([]), FakeMemory(), decision_limit=0)
+    except ValueError as exc:
+        assert "至少是 1" in str(exc)
+    else:
+        raise AssertionError("a zero-length queue must be refused")
+
+
 def test_web_and_weixin_share_the_same_recent_dialogue():
     history = History(None)
     model = FakeModel([_route_answer(), _route_answer(intent="ask")])
@@ -176,11 +334,13 @@ def test_web_and_weixin_share_the_same_recent_dialogue():
     loop.handle("明天呢", channel="weixin")
 
     state = model.calls[1]["state"]
-    assert "网页 / 用户：今天要不要出门" in state
-    assert "网页 / 小落子：带伞。" in state
-    assert "上次说要出门" in state
+    assert "用户问题：明天呢" in state
+    assert "网页 / 用户：今天要不要出门" not in state
+    assert "上次说要出门" not in state
     assert "明天呢" in llm.calls[1]["message"]
+    assert "最近对话（chat）" in llm.calls[1]["message"]
     assert "网页 / 用户：今天要不要出门" in llm.calls[1]["message"]
+    assert memory.agent_ids == ["chat", "chat"]
     turns = history.turns()
     assert [turn.channel for turn in turns] == ["web", "weixin"]
     assert turns[1].user_message == "明天呢"

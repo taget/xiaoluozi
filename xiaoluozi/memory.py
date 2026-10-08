@@ -1,4 +1,5 @@
 import json
+import uuid
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -36,12 +37,16 @@ class HindsightMemory:
         if self._client is None and self._base_url and self._bank_id:
             self._client = httpx.Client(timeout=20.0)
 
-    def recall(self, query: str) -> list[str]:
+    def recall(self, query: str, agent_id: str = "") -> list[str]:
         text = query.strip()
+        agent = agent_id.strip()
         if not text or not self._base_url or not self._bank_id or self._client is None:
             return []
         url = f"{self._bank_url()}/memories/recall"
         payload = {"query": text, "budget": "mid"}
+        if agent:
+            payload["tags"] = [f"agent:{agent}"]
+            payload["tags_match"] = "all_strict"
         logger.info("记忆请求 POST %s\n%s", url, json.dumps(payload, ensure_ascii=False))
         try:
             response = self._client.post(url, json=payload)
@@ -68,6 +73,41 @@ class HindsightMemory:
             logger.info("记忆请求被拒绝 未配置 turn_id=%s", turn.turn_id)
             raise MemoryError("记忆服务未配置。")
         self._retain(_payload(turn))
+
+    def retain_decisions(self, decisions) -> None:
+        """Write one document for a full decision queue. One id, so later items do not erase earlier ones."""
+        items = list(decisions)
+        if not items:
+            return
+        if not self._base_url or not self._bank_id:
+            logger.info("记忆请求被拒绝 未配置 决策队列")
+            raise MemoryError("记忆服务未配置。")
+        document_id = uuid.uuid4().hex
+        agent_id = items[0].agent_id
+        lines = [f"决策队列 {agent_id}："]
+        for index, item in enumerate(items, start=1):
+            lines.append(
+                f"{index}. 用户: {item.message} 路由: agent_id={item.agent_id} "
+                f"reason={item.reason} 认知: {item.intent}"
+            )
+        self._retain(
+            {
+                "async": False,
+                "items": [
+                    {
+                        "content": "\n".join(lines),
+                        "context": f"xiaoluozi 决策队列 {agent_id}",
+                        "document_id": document_id,
+                        "tags": [f"turn_id:{document_id}", "kind:decision-queue", f"agent:{agent_id}"],
+                        "metadata": {
+                            "turn_id": document_id,
+                            "agent_id": agent_id,
+                            "kind": "decision-queue",
+                        },
+                    }
+                ],
+            }
+        )
 
     def _bank_url(self) -> str:
         return f"{self._base_url}/v1/default/banks/{quote(self._bank_id, safe='')}"
@@ -116,7 +156,12 @@ def _payload(turn: TurnRecord) -> dict:
                 "content": content,
                 "context": "xiaoluozi 一轮对话",
                 "document_id": turn.turn_id,
-                "tags": [f"turn_id:{turn.turn_id}", "kind:turn", f"channel:{turn.channel}"],
+                "tags": [
+                    f"turn_id:{turn.turn_id}",
+                    "kind:turn",
+                    f"channel:{turn.channel}",
+                    f"agent:{turn.agent_id}",
+                ],
                 "metadata": {
                     "turn_id": turn.turn_id,
                     "agent_id": turn.agent_id,

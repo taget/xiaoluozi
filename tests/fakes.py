@@ -20,12 +20,15 @@ class FakeMemory:
     def __init__(self, error=None, memories=None):
         self.error = error
         self.turns = []
+        self.decision_batches = []
         self.attempts = 0
         self.memories = list(memories or [])
         self.queries = []
+        self.agent_ids = []
 
-    def recall(self, query):
+    def recall(self, query, agent_id=""):
         self.queries.append(query)
+        self.agent_ids.append(agent_id)
         return list(self.memories)
 
     def retain_turn(self, turn):
@@ -33,6 +36,11 @@ class FakeMemory:
         if self.error:
             raise self.error
         self.turns.append(turn)
+
+    def retain_decisions(self, decisions):
+        if self.error:
+            raise self.error
+        self.decision_batches.append(list(decisions))
 
 
 class FakeLlm:

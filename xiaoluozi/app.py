@@ -96,9 +96,7 @@ def create_app(
 
     @app.get("/api/history")
     def history_view():
-        payload = {"turns": [_turn_payload(turn) for turn in app.state.history.turns()]}
-        logger.info("请求 GET /api/history %s 条", len(payload["turns"]))
-        return payload
+        return {"turns": [_turn_payload(turn) for turn in app.state.history.turns()]}
 
     @app.post("/api/handle")
     def post_handle(body: MessageIn):

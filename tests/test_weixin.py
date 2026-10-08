@@ -111,4 +111,5 @@ def test_history_api_returns_turns_from_both_channels():
     assert "带伞。" in body["turns"][1]["reply"]
     page = client.get("/").text
     assert "/api/history" in page
+    assert "setInterval(loadHistory, 3000)" not in page
     assert "微信和这个页面是同一段对话。" in page

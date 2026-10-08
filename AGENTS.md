@@ -8,10 +8,10 @@
 
 `Loop` 是唯一的编排者，顺序固定，不要打乱，也不要跳步：
 
-1. 拉取上下文。启用的代理名单在装配时已经从 `.env` 读好。
-2. 调用 laya：决定用哪个代理，并明确用户意图。不执行代理。
-3. 把用户的话、上下文和意图交给被选中的代理。代理再请求一次大模型。
-4. 写入：把这一轮交给记忆端口。意图记在认知里。同时追加到本地最近对话。
+1. 用用户的最新输入做成决策依赖，只把这一句交给 laya。
+2. 调用 laya：决定用哪个代理，并明确用户意图。不执行代理。结果进入该 `agent_id` 自己的决策队列。和队列里最新一条的代理、依据、意图都相同，则不入队。laya 失败时，沿用队列里最新一条，也不入队；队列是空的，这一轮拒绝。每个代理一条，默认 10 条，构造 `Loop` 时用 `decision_limit` 改。哪一条满了，就只把那一条写成一份记忆并清空；没满不写。
+3. 按选中的代理拉取它自己的上下文记忆：本地最近对话里只取这个 `agent_id` 的 8 轮，Hindsight 召回带上 `agent:{agent_id}`。再把用户的话、这份记忆和意图交给该代理。代理再请求一次大模型。
+4. 写入：把这一轮交给记忆端口，标签带这个 `agent_id`。意图记在认知里。同时追加到本地最近对话，并记下是哪个代理。
 
 失败时的行为也是固定的：
 
@@ -23,7 +23,7 @@
 - `.env` 里没有 `TYPESAFE_API_KEY`：抛出 `ModelNotConfigured`。不要编一条假回复，也不要发网络请求。
 - 问答模型没配好（缺 `LLM_API_KEY`、`LLM_BASE_URL` 或 `LLM_MODEL_NAME`）：代理抛出 `ModelNotConfigured`，回路收成 `ReplyError`，不写记忆，不发网络请求。
 
-laya 只做这一次决策：选代理，并明确意图。发给它的 `state` 包含用户问题、当前上下文，以及启用的代理。上下文先拼本地最近 8 轮对话，再拼 Hindsight 召回。召回失败或没有记忆时，这一轮继续；两边都空，才写「没有可用的上下文。」。没有合适的代理时用默认代理，意图仍然传给它。只要启用了代理，就会询问 laya。
+laya 只做这一次决策：选代理，并明确意图。发给它的 `state` 里，用户问题是决策依赖，也就是这一轮的原话；当前上下文在这里是空的。代理选定之后才取它自己的上下文记忆，交给 `_revise_context`。这一步现在原样返回，以后改某个代理的记忆只改这里。做决定前打出「决策依赖」，交给代理前打出「上下文记忆」。召回失败或没有记忆时，这一轮继续；该代理没有记忆，才写「没有可用的上下文。」。没有合适的代理时用默认代理，意图仍然传给它。只要启用了代理，就会询问 laya。
 
 记忆已配置时，代理调用大模型经 `hindsight_litellm.wrap_openai`。`chat` 和 `qa` 共用这一份客户端。laya 这次路由不走包装器，避免改写上面的 `state`。回路最后仍把这一轮写成一份文档，`document_id` 就是 `turn_id`，正文包含通道、用户的话、路由决定、模型回复和认知。不要把同一轮拆成多个共用 `document_id` 的条目，后写入的会盖掉先写入的。地址和 bank id 只从 `.env` 读取，不安装 Hindsight 服务。本地最近对话写在 `data/history.json`，和 Hindsight 是两份东西。
 
@@ -52,7 +52,7 @@ Skill 放在 `xiaoluozi/skills/<name>/SKILL.md`，按 Agent Skills 组织。fron
 - 密钥只放在项目根目录的 `.env`，不写进仓库、测试或页面。`Settings.load` 只读这个文件，不读进程环境变量。微信扫码登录后的 bot token 写在 gitignore 的 `data/weixin/account.json`，只在 `WEIXIN_ENABLED=true` 且 `.env` 里没有 `WEIXIN_BOT_TOKEN` 时读取。相关键见 `README.md`。
 - Jev 客户端 POST systemone，请求体是 `model`、`state`、`questions`。问题只有 `choice`、`score`、`noul`。不发 `messages`。
 - 代理用 `.env` 里的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME`。地址如果已经以 `/chat/completions` 结尾，客户端会先去掉这段再追加。请求体是 `model` 和 `messages`，第一条是该代理自己的系统提示词。
-- 回路在路由前拼上下文：本地最近 8 轮，再 `memory.recall`。最后调用 `memory.retain_turn`。代理这次调用上的注入和写入由 `wrap_openai` 完成。Hindsight 的地址和 bank id 从 `.env` 传给包装器。
+- 回路在选定代理后拼该代理的上下文：本地最近对话里这个 `agent_id` 的 8 轮，再 `memory.recall(message, agent_id)`。最后调用 `memory.retain_turn`，标签含 `agent:{agent_id}`。代理这次调用上的注入和写入由 `wrap_openai` 完成。Hindsight 的地址和 bank id 从 `.env` 传给包装器。
 - 页面只呈现回复、是否写入，以及失败说明。选用哪个代理和决策依据写在回复末尾，不另开一块，也不展开认知原文。网页和微信的回合都出现在同一条对话里，微信来的那一句标成「微信」。
 - `app` 关闭了 OpenAPI 文档。服务绑定 `0.0.0.0:8741`。微信通道在 `WEIXIN_ENABLED=true` 且有 token 时，由进程里的后台线程长轮询，收到文本后调用同一个 `handle`，`channel` 为 `weixin`。
 
