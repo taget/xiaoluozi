@@ -1,7 +1,7 @@
 import json
+import threading
 
 import httpx
-
 from hindsight_litellm import wrap_openai
 
 from xiaoluozi.config import Settings
@@ -210,3 +210,18 @@ def test_build_loop_wraps_the_qa_client():
     assert llm._model == "demo-llm"
     assert llm._client._api_url == "http://hindsight.local"
     assert str(llm._client._client._client.base_url).rstrip("/") == "https://example.test/v1"
+    assert llm._client.chat is llm._client.chat
+
+    found = {}
+
+    def grab():
+        found["chat"] = llm._client.chat
+
+    thread = threading.Thread(target=grab)
+    thread.start()
+    thread.join()
+
+    assert found["chat"] is not llm._client.chat
+    # 两条线程各有一份包装器，里面的 OpenAI 客户端仍是同一个。
+    assert found["chat"]._wrapper._client is llm._client.chat._wrapper._client
+    assert found["chat"]._wrapper._api_url == "http://hindsight.local"
