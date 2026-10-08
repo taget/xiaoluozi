@@ -1,3 +1,6 @@
+import threading
+from typing import Any
+
 from hindsight_litellm import wrap_openai
 from openai import OpenAI
 
@@ -62,10 +65,35 @@ def _llm(settings: Settings):
         settings.llm_api_key,
     )
     if settings.memory_configured:
-        client = wrap_openai(
-            client,
-            hindsight_api_url=settings.hindsight_base_url,
-            bank_id=settings.hindsight_bank_id,
-            verbose=True,
-        )
+        client = _ThreadLocalOpenAI(client, settings.hindsight_base_url, settings.hindsight_bank_id)
     return LlmClient(client, settings.llm_model, settings.llm_api_key)
+
+
+class _ThreadLocalOpenAI:
+    """每个调用线程一份 wrap_openai。
+
+    包装器里的 Hindsight 客户端会把 aiohttp 会话绑在第一次使用它的事件循环上。
+    网页请求跑在线程池里，微信长轮询是另一条线程。共用一份包装器时，换线程召回会报
+    Timeout context manager should be used inside a task。
+    """
+
+    def __init__(self, inner: LoggingOpenAI, api_url: str, bank_id: str) -> None:
+        self._inner = inner
+        self._wrap_cfg = (api_url, bank_id)
+        self._local = threading.local()
+
+    def _wrapped(self) -> Any:
+        client = getattr(self._local, "client", None)
+        if client is None:
+            api_url, bank_id = self._wrap_cfg
+            client = wrap_openai(
+                self._inner,
+                hindsight_api_url=api_url,
+                bank_id=bank_id,
+                verbose=True,
+            )
+            self._local.client = client
+        return client
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped(), name)
