@@ -21,11 +21,11 @@ def history_path(root: Path | None = None) -> Path:
 class SharedTurn:
     turn_id: str
     channel: str
+    agent_id: str
     user_message: str
     reply: str
     shown: str
     note: str | None
-    agent_id: str = ""
 
 
 class History:
@@ -46,22 +46,22 @@ class History:
         reply: str,
         shown: str,
         note: str | None,
-        turn_id: str | None = None,
         agent_id: str = "",
+        turn_id: str | None = None,
     ) -> SharedTurn:
         turn = SharedTurn(
             turn_id=turn_id or uuid.uuid4().hex,
             channel=channel if channel in CHANNEL_LABELS else "web",
+            agent_id=agent_id.strip() or "chat",
             user_message=user_message,
             reply=reply,
             shown=shown,
             note=note,
-            agent_id=agent_id.strip(),
         )
         with self._lock:
             self._turns.append(turn)
             self._save_locked()
-        logger.info("历史写入 channel=%s turn_id=%s", turn.channel, turn.turn_id)
+        logger.info("历史写入 channel=%s agent_id=%s turn_id=%s", turn.channel, turn.agent_id, turn.turn_id)
         return turn
 
     def turns(self) -> list[SharedTurn]:
@@ -74,11 +74,11 @@ class History:
             return None
         return turns[-1]
 
-    def context(self) -> str:
-        recent = self.turns()[-CONTEXT_TURNS:]
+    def context(self, agent_id: str) -> str:
+        recent = [turn for turn in self.turns() if turn.agent_id == agent_id][-CONTEXT_TURNS:]
         if not recent:
             return ""
-        lines = ["最近对话："]
+        lines = [f"最近对话（{agent_id}）："]
         for turn in recent:
             label = CHANNEL_LABELS.get(turn.channel, turn.channel)
             lines.append(f"{label} / 用户：{turn.user_message}")
@@ -92,11 +92,11 @@ class History:
             {
                 "turn_id": turn.turn_id,
                 "channel": turn.channel,
+                "agent_id": turn.agent_id,
                 "user_message": turn.user_message,
                 "reply": turn.reply,
                 "shown": turn.shown,
                 "note": turn.note,
-                "agent_id": turn.agent_id,
             }
             for turn in self._turns
         ]
@@ -129,11 +129,11 @@ def _load(path: Path) -> list[SharedTurn]:
             SharedTurn(
                 turn_id=turn_id if isinstance(turn_id, str) and turn_id else uuid.uuid4().hex,
                 channel=channel if channel in CHANNEL_LABELS else "web",
+                agent_id=agent_id.strip() if isinstance(agent_id, str) and agent_id.strip() else "chat",
                 user_message=user_message,
                 reply=reply,
                 shown=shown,
                 note=note if isinstance(note, str) and note else None,
-                agent_id=agent_id.strip() if isinstance(agent_id, str) else "",
             )
         )
     return turns

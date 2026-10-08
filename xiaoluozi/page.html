@@ -236,6 +236,9 @@
     const formError = document.getElementById("form-error");
     let sending = false;
     let holdError = false;
+    let historyKey = "";
+    let weixinOn = false;
+    let historyWatch = false;
 
     function showBanner(text) {
       banner.hidden = false;
@@ -255,8 +258,15 @@
           showBanner("模型还没配好。在 .env 里设置 TYPESAFE_API_KEY 之后，这句话才能得到回复。");
         }
         if (data.weixin_configured) {
+          weixinOn = true;
           channelNote.hidden = false;
           channelNote.textContent = "微信和这个页面是同一段对话。";
+          if (!historyWatch) {
+            historyWatch = true;
+            setInterval(() => {
+              if (document.visibilityState === "visible") loadHistory();
+            }, 15000);
+          }
         }
       } catch (err) {
         showBanner("暂时没能确认模型是否配好。");
@@ -305,7 +315,11 @@
         const response = await fetch("/api/history");
         if (!response.ok) return;
         const data = await response.json();
-        renderHistory(data.turns || []);
+        const turns = data.turns || [];
+        const key = turns.map((turn) => turn.id || "").join("\n");
+        if (key === historyKey) return;
+        historyKey = key;
+        renderHistory(turns);
       } catch (err) {
         /* 下一轮再取。 */
       }
@@ -378,9 +392,11 @@
       }
     });
 
+    document.addEventListener("visibilitychange", () => {
+      if (weixinOn && document.visibilityState === "visible") loadHistory();
+    });
     loadStatus();
     loadHistory();
-    setInterval(loadHistory, 3000);
   </script>
 </body>
 </html>
