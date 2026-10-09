@@ -25,6 +25,7 @@ class SharedTurn:
     reply: str
     shown: str
     note: str | None
+    agent_id: str = ""
 
 
 class History:
@@ -46,6 +47,7 @@ class History:
         shown: str,
         note: str | None,
         turn_id: str | None = None,
+        agent_id: str = "",
     ) -> SharedTurn:
         turn = SharedTurn(
             turn_id=turn_id or uuid.uuid4().hex,
@@ -54,6 +56,7 @@ class History:
             reply=reply,
             shown=shown,
             note=note,
+            agent_id=agent_id.strip(),
         )
         with self._lock:
             self._turns.append(turn)
@@ -64,6 +67,12 @@ class History:
     def turns(self) -> list[SharedTurn]:
         with self._lock:
             return list(self._turns)
+
+    def latest(self) -> SharedTurn | None:
+        turns = self.turns()
+        if not turns:
+            return None
+        return turns[-1]
 
     def context(self) -> str:
         recent = self.turns()[-CONTEXT_TURNS:]
@@ -87,6 +96,7 @@ class History:
                 "reply": turn.reply,
                 "shown": turn.shown,
                 "note": turn.note,
+                "agent_id": turn.agent_id,
             }
             for turn in self._turns
         ]
@@ -114,6 +124,7 @@ def _load(path: Path) -> list[SharedTurn]:
         note = item.get("note")
         channel = item.get("channel")
         turn_id = item.get("turn_id")
+        agent_id = item.get("agent_id")
         turns.append(
             SharedTurn(
                 turn_id=turn_id if isinstance(turn_id, str) and turn_id else uuid.uuid4().hex,
@@ -122,6 +133,7 @@ def _load(path: Path) -> list[SharedTurn]:
                 reply=reply,
                 shown=shown,
                 note=note if isinstance(note, str) and note else None,
+                agent_id=agent_id.strip() if isinstance(agent_id, str) else "",
             )
         )
     return turns

@@ -18,6 +18,7 @@ class Skill:
     name: str
     description: str
     body: str
+    allowed_tools: tuple[str, ...] = ()
 
 
 def skills_root() -> Path:
@@ -38,7 +39,7 @@ class SkillCatalog:
             skill_file = path / "SKILL.md"
             if not skill_file.is_file():
                 continue
-            name, description, _body = _read(skill_file, path.name)
+            name, description, _body, _tools = _read(skill_file, path.name)
             self._descriptions[name] = description
 
     def load(self, names: tuple[str, ...]) -> tuple[Skill, ...]:
@@ -46,12 +47,12 @@ class SkillCatalog:
         for name in names:
             if name not in self._descriptions:
                 raise ValueError(f"未知 skill {name}。")
-            skill_name, description, body = _read(self._root / name / "SKILL.md", name)
+            skill_name, description, body, allowed_tools = _read(self._root / name / "SKILL.md", name)
             text = body.strip()
             if not text:
                 raise ValueError(f"skill {name} 的说明是空的。")
             logger.info("skill 加载 %s", name)
-            loaded.append(Skill(skill_name, description, text))
+            loaded.append(Skill(skill_name, description, text, allowed_tools))
         return tuple(loaded)
 
 
@@ -88,7 +89,7 @@ def _read(path: Path, directory: str) -> tuple[str, str, str]:
         raise ValueError(f"skill {directory} 缺少 description。")
     if len(description) > 1024:
         raise ValueError(f"skill {directory} 的 description 过长。")
-    return name, description, body
+    return name, description, body, _tool_names(fields.get("allowed-tools", ""))
 
 
 def _check_name(name: str, directory: str) -> None:
@@ -123,7 +124,7 @@ def _fields(lines: list[str], directory: str) -> dict[str, str]:
             value = " ".join(part for part in block if part).strip()
         else:
             value = _unquote(raw)
-        if key in {"name", "description"}:
+        if key in {"name", "description", "allowed-tools"}:
             fields[key] = value
     return fields
 
@@ -153,6 +154,15 @@ def _join_block(marker: str, block: list[str]) -> str:
     if current:
         paragraphs.append(" ".join(current))
     return "\n".join(paragraphs).strip()
+
+
+def _tool_names(raw: str) -> tuple[str, ...]:
+    names = []
+    for part in raw.replace(",", " ").split():
+        name = part.strip().lstrip("-").strip()
+        if name and name not in names:
+            names.append(name)
+    return tuple(names)
 
 
 def _unquote(value: str) -> str:

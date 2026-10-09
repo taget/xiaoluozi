@@ -1,6 +1,6 @@
 from tests.fakes import FakeModel, SpyAgent
 from xiaoluozi.registry import Registry
-from xiaoluozi.router import Router
+from xiaoluozi.router import LAYA_MAX_TOKENS, Router, laya_request_tokens
 
 
 def _registry():
@@ -32,6 +32,32 @@ def test_valid_choice_selects_that_agent_and_does_not_run_it(capsys):
     logged = capsys.readouterr().err
     assert "路由决定 agent_id=notes" in logged
     assert "reason=把一句话记成备忘。" in logged
+
+
+def test_laya_receives_every_enabled_agent(capsys):
+    registry = Registry(
+        [
+            SpyAgent("chat", "日常对话。"),
+            SpyAgent("qa", "回答问题。"),
+            SpyAgent("cvm", "处理 CVM 运营。"),
+        ]
+    )
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "cvm"},
+                "intent": {"type": "choice", "choice": "ask"},
+            }
+        ]
+    )
+    Router(model, registry, selectable=["chat", "qa", "cvm"]).route("查询北京库存")
+
+    criteria = model.calls[0]["questions"]["agent_id"]["criteria"]
+    state = model.calls[0]["state"]
+    for agent_id in ("chat", "qa", "cvm"):
+        assert agent_id in criteria
+        assert f"- {agent_id}：" in state
+    assert "路由候选 chat、qa、cvm" in capsys.readouterr().err
 
 
 def test_malformed_route_falls_back_to_chat():
@@ -91,6 +117,29 @@ def test_none_choice_uses_the_default_agent_and_keeps_the_intent():
     assert "回退" in decision.reason
     assert chat.handled == []
     assert notes.handled == []
+
+
+def test_oversized_context_is_compressed_before_laya(capsys):
+    registry, _chat, _notes = _registry()
+    model = FakeModel([{"agent_id": {"type": "choice", "choice": "notes"}}])
+    history = "最近对话：\n" + "\n".join(
+        f"网页 / 用户：旧{index}" + ("旧" * 3000) + f"\n网页 / 小落子：早{index}" for index in range(6)
+    )
+    history += "\n网页 / 用户：新对话唯一标记\n网页 / 小落子：留下这句。"
+    recall = "相关记忆：\n" + ("记忆" * 20000)
+    context = f"{history}\n\n{recall}"
+
+    Router(model, registry).route("查询北京库存", context)
+
+    state = model.calls[0]["state"]
+    questions = model.calls[0]["questions"]
+    assert laya_request_tokens(state, questions) <= LAYA_MAX_TOKENS
+    assert "用户问题：查询北京库存" in state
+    assert "新对话唯一标记" in state
+    assert "- notes：" in state
+    assert "记忆" * 20000 not in state
+    assert "已省略" in state
+    assert "路由上下文已压缩" in capsys.readouterr().err
 
 
 def test_unknown_agent_id_falls_back_to_chat():

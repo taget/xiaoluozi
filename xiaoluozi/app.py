@@ -12,10 +12,11 @@ from xiaoluozi.config import Settings, env_path
 from xiaoluozi.entry import handle, install
 from xiaoluozi.errors import ModelError, ModelNotConfigured, ReplyError
 from xiaoluozi.history import History, history_path
-from xiaoluozi.log import get_logger
+from xiaoluozi.log import get_logger, silence_history_access_log
 from xiaoluozi.wiring import build_loop
 
 logger = get_logger("xiaoluozi.app")
+silence_history_access_log()
 
 _PAGE = Path(__file__).with_name("page.html").read_text(encoding="utf-8")
 
@@ -97,7 +98,7 @@ def create_app(
     @app.get("/api/history")
     def history_view():
         payload = {"turns": [_turn_payload(turn) for turn in app.state.history.turns()]}
-        logger.info("请求 GET /api/history %s 条", len(payload["turns"]))
+        logger.debug("请求 GET /api/history %s 条", len(payload["turns"]))
         return payload
 
     @app.post("/api/handle")

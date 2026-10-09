@@ -41,8 +41,10 @@ class FakeLlm:
         self.error = error
         self.calls = []
 
-    def answer(self, system, message):
-        self.calls.append({"system": system, "message": message})
+    def answer(self, system, message, tools=None, env=None):
+        self.calls.append(
+            {"system": system, "message": message, "tools": list(tools or []), "env": dict(env or {})}
+        )
         if self.error is not None:
             raise self.error
         return self.text

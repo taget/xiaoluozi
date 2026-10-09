@@ -1,14 +1,15 @@
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 DEFAULT_BASE_URL = "http://v2.open.venus.oa.com/llmproxy"
 DEFAULT_MODEL = "jev-1.13.0"
 DEFAULT_LAYA_MODEL = "laya"
 DEFAULT_AGENT = "chat"
-DEFAULT_ENABLED_AGENTS = "chat,qa"
+DEFAULT_ENABLED_AGENTS = "chat,qa,cvm"
 DEFAULT_WEIXIN_BASE_URL = "https://ilinkai.weixin.qq.com"
+DEFAULT_TOOL_MAX_ROUNDS = 8
 
 
 def env_path() -> Path:
@@ -43,6 +44,19 @@ def _pick(values: dict[str, str], name: str, default: str = "") -> str:
 
 def _flag(raw: str) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _positive_int(raw: str, default: int, name: str) -> int:
+    text = raw.strip()
+    if not text:
+        return default
+    try:
+        value = int(text)
+    except ValueError:
+        raise ValueError(f"{name} 必须是正整数。") from None
+    if value < 1:
+        raise ValueError(f"{name} 必须是正整数。")
+    return value
 
 
 def _account_id(raw: str) -> str:
@@ -110,6 +124,8 @@ class Settings:
     weixin_base_url: str
     weixin_token: str
     weixin_account_id: str
+    max_tool_rounds: int = DEFAULT_TOOL_MAX_ROUNDS
+    dotenv: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":
@@ -132,6 +148,12 @@ class Settings:
             weixin_base_url=_pick(values, "WEIXIN_BASE_URL", DEFAULT_WEIXIN_BASE_URL),
             weixin_token=_pick(values, "WEIXIN_BOT_TOKEN"),
             weixin_account_id=_account_id(_pick(values, "WEIXIN_ACCOUNT_ID", "default")),
+            max_tool_rounds=_positive_int(
+                _pick(values, "TOOL_MAX_ROUNDS"),
+                DEFAULT_TOOL_MAX_ROUNDS,
+                "TOOL_MAX_ROUNDS",
+            ),
+            dotenv=dict(values),
         )
         return _apply_weixin_account(settings, values, env_file.parent)
 
@@ -150,3 +172,7 @@ class Settings:
     @property
     def weixin_configured(self) -> bool:
         return self.weixin_enabled and bool(self.weixin_token.strip() and self.weixin_base_url.strip())
+
+    def pick(self, keys: tuple[str, ...]) -> dict[str, str]:
+        """Values an agent named in env_keys. Missing keys are empty strings."""
+        return {key: self.dotenv.get(key, "") for key in keys}

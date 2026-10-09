@@ -5,6 +5,8 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from xiaoluozi.errors import ModelError, ModelNotConfigured
 from xiaoluozi.log import get_logger
+from xiaoluozi.config import DEFAULT_TOOL_MAX_ROUNDS
+from xiaoluozi.tools import finish_answer
 
 logger = get_logger("xiaoluozi.model")
 _NOT_CONFIGURED = "模型还没配好。在 .env 里设置 TYPESAFE_API_KEY 后再试。"
@@ -192,57 +194,79 @@ class LoggingOpenAI:
 class LlmClient:
     """One chat completion. The caller supplies the system prompt."""
 
-    def __init__(self, client, model: str, api_key: str = ""):
+    def __init__(self, client, model: str, api_key: str = "", max_tool_rounds: int = DEFAULT_TOOL_MAX_ROUNDS):
         self._client = client
         self._model = model.strip()
         self._api_key = api_key.strip()
+        self._max_tool_rounds = max_tool_rounds
 
-    def answer(self, system: str, message: str) -> str:
+    def answer(self, system: str, message: str, tools=None, env=None) -> str:
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": message},
         ]
+        secrets = _secret_values(env)
+        text = finish_answer(
+            lambda messages, tools: self._create(messages, tools, secrets),
+            messages,
+            tools,
+            env,
+            max_rounds=self._max_tool_rounds,
+        )
+        logger.info("问答响应 %s", self._redact(text, secrets))
+        return text
+
+    def _create(self, messages: list, tools: list, secrets=()):
         logger.info(
             "问答请求 model=%s\n%s",
             self._model,
-            _format_messages(messages, self._api_key),
+            _format_messages(messages, self._api_key, secrets),
         )
+        kwargs = {"model": self._model, "messages": messages}
+        if tools:
+            kwargs["tools"] = tools
         try:
-            response = self._client.chat.completions.create(model=self._model, messages=messages)
+            return self._client.chat.completions.create(**kwargs)
         except APITimeoutError as exc:
-            logger.info("问答请求失败 超时 %s", self._redact(str(exc)))
+            logger.info("问答请求失败 超时 %s", self._redact(str(exc), secrets))
             raise ModelError("问答模型调用超时。") from exc
         except APIConnectionError as exc:
-            logger.info("问答请求失败 连不上 %s", self._redact(str(exc)))
+            logger.info("问答请求失败 连不上 %s", self._redact(str(exc), secrets))
             raise ModelError("连不上问答模型。") from exc
         except APIStatusError as exc:
-            logger.info("问答响应 %s\n%s", exc.status_code, self._redact(exc.response.text))
+            logger.info("问答响应 %s\n%s", exc.status_code, self._redact(exc.response.text, secrets))
             raise ModelError(f"问答模型调用失败（{exc.status_code}）。") from exc
         except (ModelError, ModelNotConfigured):
             raise
         except Exception as exc:
-            logger.info("问答请求失败 %s", self._redact(str(exc)))
+            logger.info("问答请求失败 %s", self._redact(str(exc), secrets))
             raise ModelError("问答模型调用失败。") from exc
-        text = _completion_text(response).strip()
-        logger.info("问答响应 %s", self._redact(text))
-        if not text:
-            raise ModelError("模型返回里没有回复内容。")
-        return text
 
-    def _redact(self, text: str) -> str:
+    def _redact(self, text: str, secrets=()) -> str:
         if self._api_key and self._api_key in text:
-            return text.replace(self._api_key, "[redacted]")
+            text = text.replace(self._api_key, "[redacted]")
+        for value in secrets:
+            if value and value in text:
+                text = text.replace(value, "[redacted]")
         return text
 
 
-def _format_messages(messages, api_key: str = "") -> str:
+def _secret_values(env) -> tuple[str, ...]:
+    values = []
+    for value in (env or {}).values():
+        if isinstance(value, str) and value and value not in values:
+            values.append(value)
+    return tuple(values)
+
+
+def _format_messages(messages, api_key: str = "", secrets=()) -> str:
     blocks = []
     for message in messages:
         if not isinstance(message, dict):
             blocks.append(_redact(str(message), api_key))
             continue
         role = message.get("role") or "message"
-        content = _redact(_format_content(message.get("content")), api_key)
+        content = _redact(_format_content(message.get("content")), api_key, secrets)
         blocks.append(f"[{role}]\n{content}")
     return "\n\n".join(blocks)
 
@@ -265,15 +289,11 @@ def _format_content(content) -> str:
     return json.dumps(content, ensure_ascii=False, indent=2)
 
 
-def _redact(text: str, api_key: str) -> str:
+def _redact(text: str, api_key: str, secrets=()) -> str:
     if api_key and api_key in text:
-        return text.replace(api_key, "[redacted]")
+        text = text.replace(api_key, "[redacted]")
+    for value in secrets:
+        if value and value in text:
+            text = text.replace(value, "[redacted]")
     return text
 
-
-def _completion_text(response) -> str:
-    choices = getattr(response, "choices", None) or []
-    if not choices:
-        return ""
-    content = getattr(getattr(choices[0], "message", None), "content", None)
-    return content if isinstance(content, str) else ""

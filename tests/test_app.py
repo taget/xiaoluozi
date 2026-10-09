@@ -1,7 +1,10 @@
+import logging
+
 from fastapi.testclient import TestClient
 
 from tests.fakes import FakeMemory, FakeModel
 from xiaoluozi.app import create_app
+from xiaoluozi.log import QuietHistoryAccess
 from xiaoluozi.errors import ModelError, ReplyError
 from xiaoluozi.loop import Reply
 
@@ -88,6 +91,49 @@ def test_blank_message_is_not_a_reply():
     assert response.status_code == 400
     assert response.json() == {"error": "先写一句话。"}
     assert loop.messages == []
+
+
+def test_history_poll_stays_out_of_the_info_log(capsys):
+    client = TestClient(create_app(loop=StubLoop(), model_configured=True))
+    response = client.get("/api/history")
+
+    assert response.status_code == 200
+    assert "GET /api/history" not in capsys.readouterr().err
+
+
+def test_history_poll_is_dropped_from_the_access_log():
+    quiet = QuietHistoryAccess()
+    history = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:1", "GET", "/api/history", "1.1", 200),
+        None,
+    )
+    failed = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:1", "GET", "/api/history", "1.1", 500),
+        None,
+    )
+    handle = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:1", "POST", "/api/handle", "1.1", 200),
+        None,
+    )
+
+    assert quiet.filter(history) is False
+    assert quiet.filter(failed) is True
+    assert quiet.filter(handle) is True
 
 
 def test_unconfigured_submit_does_not_call_the_loop():

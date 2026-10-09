@@ -2,6 +2,7 @@ from hindsight_litellm import wrap_openai
 from openai import OpenAI
 
 from xiaoluozi.agents.chat import ChatAgent
+from xiaoluozi.agents.cvm import CvmAgent
 from xiaoluozi.agents.qa import QaAgent
 from xiaoluozi.config import Settings
 from xiaoluozi.history import History
@@ -32,11 +33,20 @@ def build_loop(settings: Settings | None = None, history: History | None = None)
     )
 
 
+def _make(agent_cls, llm, skills: SkillCatalog, settings: Settings):
+    return agent_cls(
+        llm,
+        skills.load(agent_cls.skill_ids),
+        env=settings.pick(getattr(agent_cls, "env_keys", ())),
+    )
+
+
 def _registry(settings: Settings, llm):
     skills = SkillCatalog()
     catalog = {
-        "chat": ChatAgent(llm, skills.load(ChatAgent.skill_ids)),
-        "qa": QaAgent(llm, skills.load(QaAgent.skill_ids)),
+        "chat": _make(ChatAgent, llm, skills, settings),
+        "qa": _make(QaAgent, llm, skills, settings),
+        "cvm": _make(CvmAgent, llm, skills, settings),
     }
     if settings.default_agent not in catalog:
         raise ValueError(f"未知的默认代理 {settings.default_agent}。")
@@ -68,4 +78,4 @@ def _llm(settings: Settings):
             bank_id=settings.hindsight_bank_id,
             verbose=True,
         )
-    return LlmClient(client, settings.llm_model, settings.llm_api_key)
+    return LlmClient(client, settings.llm_model, settings.llm_api_key, settings.max_tool_rounds)

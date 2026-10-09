@@ -1,6 +1,6 @@
 import json
 
-from xiaoluozi.config import DEFAULT_BASE_URL, DEFAULT_MODEL, Settings, account_path, env_path
+from xiaoluozi.config import DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TOOL_MAX_ROUNDS, Settings, account_path, env_path
 
 
 def test_settings_use_documented_defaults_when_dotenv_is_missing(tmp_path):
@@ -16,12 +16,18 @@ def test_settings_use_documented_defaults_when_dotenv_is_missing(tmp_path):
     assert settings.llm_model == ""
     assert settings.llm_configured is False
     assert settings.laya_model == "laya"
-    assert settings.enabled_agents == ("chat", "qa")
+    assert settings.enabled_agents == ("chat", "qa", "cvm")
     assert settings.default_agent == "chat"
     assert settings.weixin_enabled is False
     assert settings.weixin_configured is False
     assert settings.weixin_token == ""
     assert settings.weixin_base_url == "https://ilinkai.weixin.qq.com"
+    assert settings.max_tool_rounds == DEFAULT_TOOL_MAX_ROUNDS == 8
+    assert settings.pick(("YUNXIAO_SECRET_ID", "YUNXIAO_SECRET_KEY", "YUNXIAO_API_URL")) == {
+        "YUNXIAO_SECRET_ID": "",
+        "YUNXIAO_SECRET_KEY": "",
+        "YUNXIAO_API_URL": "",
+    }
 
 
 def test_blank_base_url_and_model_fall_back_to_defaults(tmp_path):
@@ -53,6 +59,10 @@ def test_settings_come_from_the_dotenv_file_not_the_process(tmp_path, monkeypatc
                 'LAYA_MODEL="laya"',
                 'ENABLED_AGENTS="qa, chat"',
                 'DEFAULT_AGENT="qa"',
+                'YUNXIAO_SECRET_ID="sid-from-file"',
+                'YUNXIAO_SECRET_KEY="skey-from-file"',
+                'YUNXIAO_API_URL="http://yunxiao.test"',
+                'TOOL_MAX_ROUNDS="3"',
             ]
         )
         + "\n",
@@ -62,6 +72,10 @@ def test_settings_come_from_the_dotenv_file_not_the_process(tmp_path, monkeypatc
     monkeypatch.setenv("TYPESAFE_BASE_URL", "http://shell.example")
     monkeypatch.setenv("LLM_API_KEY", "from-the-shell")
     monkeypatch.setenv("LLM_MODEL_NAME", "from-the-shell")
+    monkeypatch.setenv("YUNXIAO_SECRET_ID", "from-the-shell")
+    monkeypatch.setenv("YUNXIAO_SECRET_KEY", "from-the-shell")
+    monkeypatch.setenv("YUNXIAO_API_URL", "http://shell.example")
+    monkeypatch.setenv("TOOL_MAX_ROUNDS", "9")
 
     settings = Settings.load(env)
 
@@ -79,6 +93,35 @@ def test_settings_come_from_the_dotenv_file_not_the_process(tmp_path, monkeypatc
     assert settings.laya_model == "laya"
     assert settings.enabled_agents == ("qa", "chat")
     assert settings.default_agent == "qa"
+    assert settings.pick(("YUNXIAO_SECRET_ID", "OTHER_TOKEN", "ABSENT")) == {
+        "YUNXIAO_SECRET_ID": "sid-from-file",
+        "OTHER_TOKEN": "",
+        "ABSENT": "",
+    }
+    assert settings.max_tool_rounds == 3
+    assert settings.pick(("YUNXIAO_SECRET_KEY", "YUNXIAO_API_URL")) == {
+        "YUNXIAO_SECRET_KEY": "skey-from-file",
+        "YUNXIAO_API_URL": "http://yunxiao.test",
+    }
+
+
+def test_tool_max_rounds_must_be_a_positive_integer(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("TOOL_MAX_ROUNDS=两次\n", encoding="utf-8")
+    try:
+        Settings.load(env)
+    except ValueError as exc:
+        assert str(exc) == "TOOL_MAX_ROUNDS 必须是正整数。"
+    else:
+        raise AssertionError("a non-integer limit must fail at load")
+
+    env.write_text("TOOL_MAX_ROUNDS=0\n", encoding="utf-8")
+    try:
+        Settings.load(env)
+    except ValueError as exc:
+        assert str(exc) == "TOOL_MAX_ROUNDS 必须是正整数。"
+    else:
+        raise AssertionError("zero rounds must fail at load")
 
 
 def test_default_env_path_is_the_project_root_dotenv():

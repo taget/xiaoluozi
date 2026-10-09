@@ -1,5 +1,4 @@
-from xiaoluozi.agents.request import agent_request
-from xiaoluozi.skills import require_skills, system_with_skills
+from xiaoluozi.agents.support import install, reply
 
 
 class QaAgent:
@@ -13,13 +12,10 @@ class QaAgent:
     description = "回答需要说明或解释的问题。用户在提问时用这个。"
     system = "你是小落子的问答代理。用简短的中文直接回答问题。不知道就说不知道，不要编造。"
     skill_ids = ()
+    env_keys = ()
 
-    def __init__(self, llm, skills=()):
-        self._llm = llm
-        self._skills = require_skills(self.skill_ids, skills)
+    def __init__(self, llm, skills=(), env=None):
+        install(self, llm, skills, env)
 
     def handle(self, message: str, *, context: str = "", intent: str = "") -> str:
-        return self._llm.answer(
-            system_with_skills(self.system, self._skills),
-            agent_request(message, context, intent),
-        )
+        return reply(self, message, context=context, intent=intent)

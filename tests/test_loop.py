@@ -4,7 +4,7 @@ from xiaoluozi.agents.chat import ChatAgent
 from xiaoluozi.errors import MemoryError, ModelError, ModelNotConfigured, ReplyError
 from xiaoluozi.loop import Loop
 from xiaoluozi.registry import Registry
-from xiaoluozi.router import INTENT_UNKNOWN, Router
+from xiaoluozi.router import INTENT_UNKNOWN, LAYA_MAX_TOKENS, Router, laya_request_tokens
 
 
 def _route_answer(agent="chat", intent="decide"):
@@ -39,7 +39,8 @@ def test_loop_asks_laya_then_passes_context_and_intent_to_the_agent(capsys):
     assert len(model.calls) == 1
     state = model.calls[0]["state"]
     assert "用户问题：今天要不要出门" in state
-    assert "上次说要出门" in state
+    assert "没有可用的上下文。" in state
+    assert "上次说要出门" not in state
     assert "- chat：" in state
     assert model.calls[0]["questions"]["agent_id"]["type"] == "choice"
     assert model.calls[0]["questions"]["intent"]["criteria"]["decide"] == "在拿主意"
@@ -146,7 +147,8 @@ def test_chosen_agent_receives_the_context_and_intent():
         {"message": "帮我记一下", "context": "用户出门要带伞", "intent": "在说一件事"}
     ]
     assert "用户问题：帮我记一下" in model.calls[0]["state"]
-    assert "用户出门要带伞" in model.calls[0]["state"]
+    assert "没有可用的上下文。" in model.calls[0]["state"]
+    assert "用户出门要带伞" not in model.calls[0]["state"]
     assert memory.queries == ["帮我记一下"]
 
 
@@ -165,6 +167,63 @@ def test_missing_model_does_not_invent_a_reply():
     assert memory.attempts == 0
 
 
+def test_long_recall_is_shortened_for_laya_and_kept_for_the_agent():
+    memory_text = "甲" * 20000
+    model = FakeModel([_route_answer()])
+    llm = FakeLlm("带伞。")
+    result = _loop(model, FakeMemory(memories=[memory_text]), llm).handle("今天要不要出门")
+
+    state = model.calls[0]["state"]
+    assert laya_request_tokens(state, model.calls[0]["questions"]) <= LAYA_MAX_TOKENS
+    assert memory_text not in state
+    assert memory_text in llm.calls[0]["message"]
+    assert "今天要不要出门" in state
+    assert result.saved is True
+
+
+def test_ack_reuses_the_previous_agent_and_does_not_ask_laya():
+    history = History(None)
+    model = FakeModel([_route_answer("cvm", "ask"), _route_answer("chat")])
+    cvm = SpyAgent("cvm", "处理 CVM。")
+    registry = Registry([ChatAgent(FakeLlm("带伞。")), cvm])
+    loop = Loop(
+        registry=registry,
+        router=Router(model, registry, selectable=["chat", "cvm"]),
+        model=model,
+        memory=FakeMemory(),
+        history=history,
+    )
+
+    loop.handle("查询北京库存")
+    result = loop.handle("好的。")
+
+    assert len(model.calls) == 1
+    assert "选用 cvm" in result.text
+    assert "沿用上次的 cvm" in result.text
+    assert cvm.requests[-1]["message"] == "好的。"
+    assert history.latest().agent_id == "cvm"
+
+
+def test_ack_with_business_words_still_asks_laya():
+    history = History(None)
+    model = FakeModel([_route_answer("cvm"), _route_answer("qa", "ask")])
+    registry = Registry([ChatAgent(FakeLlm("带伞。")), SpyAgent("cvm", "处理 CVM。"), SpyAgent("qa", "回答问题。")])
+    loop = Loop(
+        registry=registry,
+        router=Router(model, registry, selectable=["chat", "cvm", "qa"]),
+        model=model,
+        memory=FakeMemory(),
+        history=history,
+    )
+
+    loop.handle("查询北京库存")
+    loop.handle("确认库存")
+
+    assert len(model.calls) == 2
+    assert "用户问题：确认库存" in model.calls[1]["state"]
+    assert "查询北京库存" in model.calls[1]["state"]
+
+
 def test_web_and_weixin_share_the_same_recent_dialogue():
     history = History(None)
     model = FakeModel([_route_answer(), _route_answer(intent="ask")])
@@ -176,11 +235,13 @@ def test_web_and_weixin_share_the_same_recent_dialogue():
     loop.handle("明天呢", channel="weixin")
 
     state = model.calls[1]["state"]
-    assert "网页 / 用户：今天要不要出门" in state
-    assert "网页 / 小落子：带伞。" in state
-    assert "上次说要出门" in state
+    assert "用户问题：明天呢" in state
+    assert "今天要不要出门" in state
+    assert "带伞" not in state
+    assert "上次说要出门" not in state
     assert "明天呢" in llm.calls[1]["message"]
     assert "网页 / 用户：今天要不要出门" in llm.calls[1]["message"]
+    assert "上次说要出门" in llm.calls[1]["message"]
     turns = history.turns()
     assert [turn.channel for turn in turns] == ["web", "weixin"]
     assert turns[1].user_message == "明天呢"
