@@ -2,7 +2,7 @@
 
 一个 Python 进程上的个人助手工作台。你写一句话，进程里的回路先路由、再让兜底代理回复、然后抽出一条短认知，并把这一轮写入外部记忆。页面只显示回复。
 
-用户的一句话进来后，先拉取上下文和已启用的代理，再让 laya 决定用哪个代理，并明确意图。然后把这句话、上下文和意图交给那个代理，由它请求一次大模型。没有合适的代理时用默认代理，意图照样传过去。`chat` 是日常对话，也是默认代理。`qa` 回答需要说明或解释的问题。`cvm` 负责 CVM 运营，加载 `yunxiao-ops`。代理实现在代码里，启用名单在 `.env`。它们不自己写记忆。`cvm` 在模型返回 `Bash` 工具调用时会执行命令，再把结果交回模型。新代理要在命令里用环境变量时，在类上写 `env_keys`，装配时只把这些键从 `.env` 带进这次命令。
+用户的一句话进来后，先拉取上下文和已启用的代理，再让 laya 决定用哪个代理，并明确意图。然后把这句话、上下文和意图交给那个代理，由它请求一次大模型。没有合适的代理时用默认代理，意图照样传过去。`chat` 是日常对话，也是默认代理。`qa` 回答需要说明或解释的问题。`cvm` 负责 CVM 运营，加载 `yunxiao-ops`。`kb` 检索个人知识库，加载 `obsidian-kb`，只读 https://github.com/taget/obsidian 的本地检出，不改仓库，也不写入记忆。代理实现在代码里，启用名单在 `.env`。它们不自己写记忆。`cvm` 在模型返回 `Bash` 工具调用时会执行命令，再把结果交回模型。`kb` 在模型返回 `Vault` 时只检索笔记。新代理要在命令里用环境变量时，在类上写 `env_keys`，装配时只把这些键从 `.env` 带进这次命令。
 
 网页和微信是两条通道，共用最近对话，也共用同一份 Hindsight 记忆。微信走和 OpenClaw `openclaw-weixin` 一样的 iLink 机器人接口：长轮询收文本，再把回复发回去。
 
@@ -47,7 +47,7 @@ uvicorn xiaoluozi.app:app --host 0.0.0.0 --port 8741
 | `LLM_BASE_URL` | 问答的 chat completions 地址。已经以 `/chat/completions` 结尾就先去掉这段，再由客户端追加 | 无 |
 | `LLM_MODEL_NAME` | 问答用的模型 | 无 |
 | `LAYA_MODEL` | 只负责选择代理的模型 | `laya` |
-| `ENABLED_AGENTS` | 启用的代理 id，逗号分隔。实现必须在代码里 | `chat,qa,cvm` |
+| `ENABLED_AGENTS` | 启用的代理 id，逗号分隔。实现必须在代码里 | `chat,qa,cvm,kb` |
 | `DEFAULT_AGENT` | 没有合适代理时使用的代理 | `chat` |
 | `WEIXIN_ENABLED` | 是否接收微信消息 | `false` |
 | `WEIXIN_BOT_TOKEN` | 微信 iLink bot token。留空时，在通道已启用的前提下改读 `data/weixin/account.json` | 无 |
@@ -56,6 +56,7 @@ uvicorn xiaoluozi.app:app --host 0.0.0.0 --port 8741
 | `YUNXIAO_SECRET_ID` | 云霄 API 标识。`cvm` 的 `env_keys` 会把它带进这次 Bash | 无 |
 | `YUNXIAO_SECRET_KEY` | 云霄 API 密钥。只放在 `.env` | 无 |
 | `YUNXIAO_API_URL` | 云霄 API 地址。执行命令时带进去 | 无 |
+| `OBSIDIAN_VAULT_PATH` | 个人知识库的本地检出。仓库是 https://github.com/taget/obsidian 。`kb` 只在这个目录里检索 | 无 |
 | `TOOL_MAX_ROUNDS` | 同一轮里模型连续调用工具的次数。到了还没给出文字就停 | `8` |
 
 扫码登录（不把 token 打到终端）：
@@ -66,7 +67,7 @@ python -m xiaoluozi.channels
 
 确认之后把 `WEIXIN_ENABLED=true` 写进 `.env`，再重启 `python -m xiaoluozi`。微信里的话会出现在网页对话里，网页里的话也会进入下一轮发给模型的上下文。
 
-Hindsight 未配置或连不上时，回复照常返回，页面会轻轻注明这一轮没有存进记忆。已配置时，先按用户的话召回，放进 laya 的 `state`，也放进交给代理的请求。laya 不走包装器。代理调用大模型时仍用 `hindsight_litellm.wrap_openai`。回路另外把这一轮收成一份对话文档，`document_id` 用这一轮的 `turn_id`，认知栏写的是 laya 明确的意图。不安装 Hindsight 服务，地址用 `.env` 里已经部署的那份。变量示例见 `.env.example`。
+Hindsight 未配置或连不上时，回复照常返回，页面会轻轻注明这一轮没有存进记忆。已配置时，先按用户的话召回，放进交给代理的请求。laya 不走包装器。代理调用大模型时仍用 `hindsight_litellm.wrap_openai`。回路另外把这一轮收成一份对话文档，`document_id` 用这一轮的 `turn_id`，认知栏写的是 laya 明确的意图。`kb` 不召回，也不写入这份记忆。不安装 Hindsight 服务，地址用 `.env` 里已经部署的那份。变量示例见 `.env.example`。
 
 ## 测试
 

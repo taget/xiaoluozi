@@ -1,6 +1,6 @@
 """Tools a skill is allowed to run, and the model round that executes them.
 
-Only Bash is executed, and only when a skill names it. A text reply ends the round.
+Bash and Vault run only when a skill names them. Vault only reads the knowledge checkout. A text reply ends the round.
 """
 
 import json
@@ -10,6 +10,7 @@ import subprocess
 from xiaoluozi.config import DEFAULT_TOOL_MAX_ROUNDS
 from xiaoluozi.errors import ModelError
 from xiaoluozi.log import get_logger
+from xiaoluozi.vault import run_vault
 
 logger = get_logger("xiaoluozi.tools")
 
@@ -86,18 +87,48 @@ def _tool_call_parts(call) -> tuple[str, str, str]:
     )
 
 
+VAULT_SPEC = {
+    "type": "function",
+    "function": {
+        "name": "Vault",
+        "description": "在个人知识库里检索或阅读笔记。只能读，不能改文件，也不能提交。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["search", "read", "map"],
+                    "description": "search 按词检索，read 读一篇笔记，map 看知识地图。",
+                },
+                "query": {"type": "string", "description": "search 时的关键词。"},
+                "path": {"type": "string", "description": "read 时相对知识库根目录的路径。"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+
 def tool_specs(skills) -> list[dict]:
     names = []
     for skill in skills:
         for name in getattr(skill, "allowed_tools", ()):
             if name not in names:
                 names.append(name)
-    if "Bash" not in names:
-        return []
-    return [BASH_SPEC]
+    specs = []
+    if "Bash" in names:
+        specs.append(BASH_SPEC)
+    if "Vault" in names:
+        specs.append(VAULT_SPEC)
+    return specs
 
 
 def run_tool(name: str, arguments: str, env=None) -> str:
+    if name == "Vault":
+        logger.info("回路工具 Vault")
+        result = run_vault(arguments, env)
+        logger.info("回路工具结果 %s", result[:200])
+        return result
     if name != "Bash":
         return f"没有这个工具 {name}。"
     command, error = _command(arguments)

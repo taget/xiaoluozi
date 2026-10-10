@@ -57,7 +57,7 @@ class _Llm:
     def __init__(self, script):
         self.script = _Script(script)
 
-    def answer(self, system, message, tools=None, env=None):
+    def answer(self, system, message, tools=None, env=None, remember=True):
         return finish_answer(
             self.script,
             [{"role": "system", "content": system}, {"role": "user", "content": message}],

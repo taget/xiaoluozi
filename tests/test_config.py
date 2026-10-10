@@ -16,7 +16,7 @@ def test_settings_use_documented_defaults_when_dotenv_is_missing(tmp_path):
     assert settings.llm_model == ""
     assert settings.llm_configured is False
     assert settings.laya_model == "laya"
-    assert settings.enabled_agents == ("chat", "qa", "cvm")
+    assert settings.enabled_agents == ("chat", "qa", "cvm", "kb")
     assert settings.default_agent == "chat"
     assert settings.weixin_enabled is False
     assert settings.weixin_configured is False

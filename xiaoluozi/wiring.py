@@ -6,6 +6,7 @@ from openai import OpenAI
 
 from xiaoluozi.agents.chat import ChatAgent
 from xiaoluozi.agents.cvm import CvmAgent
+from xiaoluozi.agents.kb import KbAgent
 from xiaoluozi.agents.qa import QaAgent
 from xiaoluozi.config import Settings
 from xiaoluozi.history import History
@@ -50,6 +51,7 @@ def _registry(settings: Settings, llm):
         "chat": _make(ChatAgent, llm, skills, settings),
         "qa": _make(QaAgent, llm, skills, settings),
         "cvm": _make(CvmAgent, llm, skills, settings),
+        "kb": _make(KbAgent, llm, skills, settings),
     }
     if settings.default_agent not in catalog:
         raise ValueError(f"未知的默认代理 {settings.default_agent}。")
@@ -76,7 +78,13 @@ def _llm(settings: Settings):
     )
     if settings.memory_configured:
         client = _ThreadLocalOpenAI(client, settings.hindsight_base_url, settings.hindsight_bank_id)
-    return LlmClient(client, settings.llm_model, settings.llm_api_key, settings.max_tool_rounds)
+    return LlmClient(
+        client,
+        settings.llm_model,
+        settings.llm_api_key,
+        settings.max_tool_rounds,
+        memory_configured=settings.memory_configured,
+    )
 
 
 class _ThreadLocalOpenAI:

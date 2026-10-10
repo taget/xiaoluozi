@@ -7,7 +7,7 @@ DEFAULT_BASE_URL = "http://v2.open.venus.oa.com/llmproxy"
 DEFAULT_MODEL = "jev-1.13.0"
 DEFAULT_LAYA_MODEL = "laya"
 DEFAULT_AGENT = "chat"
-DEFAULT_ENABLED_AGENTS = "chat,qa,cvm"
+DEFAULT_ENABLED_AGENTS = "chat,qa,cvm,kb"
 DEFAULT_WEIXIN_BASE_URL = "https://ilinkai.weixin.qq.com"
 DEFAULT_TOOL_MAX_ROUNDS = 8
 

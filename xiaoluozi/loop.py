@@ -160,6 +160,12 @@ class Loop:
             cognition=decision.intent,
             channel=channel,
         )
+        if not self._remembers(decision.agent_id):
+            note = self._memory_note(decision.agent_id)
+            logger.info("回路不写入记忆 agent_id=%s", decision.agent_id)
+            self._remember(turn, shown, note)
+            yield Reply(text=shown, saved=False, note=note)
+            return
         try:
             self.memory.retain_turn(turn)
         except Exception as exc:
@@ -307,10 +313,19 @@ class Loop:
             recent = self.history.context(agent_id).strip()
             if recent:
                 parts.append(recent)
-        recalled = self._recall(message, agent_id)
-        if recalled:
-            parts.append(recalled)
+        if self._remembers(agent_id):
+            recalled = self._recall(message, agent_id)
+            if recalled:
+                parts.append(recalled)
+        else:
+            logger.info("回路不召回记忆 agent_id=%s", agent_id)
         return "\n\n".join(parts)
+
+    def _remembers(self, agent_id: str) -> bool:
+        return getattr(self.registry.get(agent_id), "remembers", True)
+
+    def _memory_note(self, agent_id: str) -> str:
+        return getattr(self.registry.get(agent_id), "memory_note", None) or "这一轮不写入记忆。"
 
     def _recall(self, message: str, agent_id: str) -> str:
         recall = getattr(self.memory, "recall", None)

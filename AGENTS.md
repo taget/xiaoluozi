@@ -20,6 +20,7 @@
 - 空句子：`ReplyError("先写一句话。")`，不写记忆。
 - laya 没有给出可识别的意图：代理照常处理，记忆里的认知写成 `没有识别出意图。`。
 - 记忆写入失败或未配置：回复照常返回，`saved=False`，`note` 为 `这一轮没有存进记忆。`。本地最近对话追加失败也不影响回复。
+- 代理标了 `remembers = False`：不召回，也不调用 `retain_turn`。记忆已配置时，这次大模型调用带上 `hindsight_inject_memories=false` 和 `hindsight_store_conversations=false`。没配记忆时不带这两个参数。本地最近对话仍追加。`saved=False`，`note` 用代理自己的 `memory_note`。`kb` 的说明是 `知识库只检索，这一轮不写入记忆。`。
 - `.env` 里没有 `TYPESAFE_API_KEY`：抛出 `ModelNotConfigured`。不要编一条假回复，也不要发网络请求。
 - 问答模型没配好（缺 `LLM_API_KEY`、`LLM_BASE_URL` 或 `LLM_MODEL_NAME`）：代理抛出 `ModelNotConfigured`，回路收成 `ReplyError`，不写记忆，不发网络请求。
 - 工具调用超过 `TOOL_MAX_ROUNDS` 还没给出文字：抛出 `ReplyError`，不写记忆。`TOOL_MAX_ROUNDS` 不是正整数时，装配失败。
@@ -32,9 +33,9 @@ laya 只做这一次决策：选代理，并明确意图。发给它的 `state` 
 
 代理放在 `xiaoluozi/agents/`。每个代理有 `id`、`description` 和 `handle(message, context, intent) -> str`。
 
-`handle` 不选代理，不写记忆。它用自己的系统提示词，把上下文、意图和用户的话交给大模型。技能在 frontmatter 里写了 `allowed-tools` 时，模型可以返回这些工具调用；目前只执行 `Bash`。没有声明工具的代理仍然只请求一次。
+`handle` 不选代理，不写记忆。它用自己的系统提示词，把上下文、意图和用户的话交给大模型。技能在 frontmatter 里写了 `allowed-tools` 时，模型可以返回这些工具调用；目前执行 `Bash` 和 `Vault`。`Vault` 只在知识库目录里检索和阅读。没有声明工具的代理仍然只请求一次。
 
-`chat` 是日常对话，也是默认代理。`qa` 回答需要说明或解释的问题。`cvm` 负责 CVM 运营，加载 `yunxiao-ops`。启用哪些代理由 `.env` 的 `ENABLED_AGENTS` 决定，默认用哪一个由 `DEFAULT_AGENT` 决定。代码里没有的 id 不能启用。三个代理用同一份问答模型，密钥是 `LLM_API_KEY`。
+`chat` 是日常对话，也是默认代理。`qa` 回答需要说明或解释的问题。`cvm` 负责 CVM 运营，加载 `yunxiao-ops`。`kb` 检索个人知识库，加载 `obsidian-kb`。知识库是 https://github.com/taget/obsidian 的本地检出，路径是 `OBSIDIAN_VAULT_PATH`。只检索，不改仓库，也不写入记忆。启用哪些代理由 `.env` 的 `ENABLED_AGENTS` 决定，默认用哪一个由 `DEFAULT_AGENT` 决定。代码里没有的 id 不能启用。这些代理用同一份问答模型，密钥是 `LLM_API_KEY`。
 
 Skill 放在 `xiaoluozi/skills/<name>/SKILL.md`，按 Agent Skills 组织。frontmatter 里有 `name` 和 `description`，`name` 与目录名一致，只用小写字母、数字和连字符。正文是给模型的说明。`references/`、`scripts/`、`assets/` 留在目录里，不放进这次请求。
 
@@ -50,7 +51,7 @@ Skill 放在 `xiaoluozi/skills/<name>/SKILL.md`，按 Agent Skills 组织。fron
 
 ## 边界
 
-- 密钥只放在项目根目录的 `.env`，不写进仓库、测试或页面。`Settings.load` 只读这个文件，不读进程环境变量。代理在 `env_keys` 里点名的键也从这里取。执行 Bash 时把非空的值带进这次命令，日志里打成 `[redacted]`。`cvm` 点的是 `YUNXIAO_SECRET_ID`、`YUNXIAO_SECRET_KEY`、`YUNXIAO_API_URL`。微信扫码登录后的 bot token 写在 gitignore 的 `data/weixin/account.json`，只在 `WEIXIN_ENABLED=true` 且 `.env` 里没有 `WEIXIN_BOT_TOKEN` 时读取。相关键见 `README.md`。
+- 密钥只放在项目根目录的 `.env`，不写进仓库、测试或页面。`Settings.load` 只读这个文件，不读进程环境变量。代理在 `env_keys` 里点名的键也从这里取。执行 Bash 时把非空的值带进这次命令，日志里打成 `[redacted]`。`cvm` 点的是 `YUNXIAO_SECRET_ID`、`YUNXIAO_SECRET_KEY`、`YUNXIAO_API_URL`。`kb` 点的是 `OBSIDIAN_VAULT_PATH`，只用来定位检出目录。微信扫码登录后的 bot token 写在 gitignore 的 `data/weixin/account.json`，只在 `WEIXIN_ENABLED=true` 且 `.env` 里没有 `WEIXIN_BOT_TOKEN` 时读取。相关键见 `README.md`。
 - Jev 客户端 POST systemone，请求体是 `model`、`state`、`questions`。问题只有 `choice`、`score`、`noul`。不发 `messages`。
 - 代理用 `.env` 里的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME`。地址如果已经以 `/chat/completions` 结尾，客户端会先去掉这段再追加。请求体是 `model` 和 `messages`，第一条是该代理自己的系统提示词。
 - 回路在选定代理后拼该代理的上下文：本地最近对话里这个 `agent_id` 的 8 轮，再 `memory.recall(message, agent_id)`。最后调用 `memory.retain_turn`，标签含 `agent:{agent_id}`。代理这次调用上的注入和写入由 `wrap_openai` 完成。Hindsight 的地址和 bank id 从 `.env` 传给包装器。
