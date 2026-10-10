@@ -4,12 +4,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from xiaoluozi.channels.weixin import WeixinApi, WeixinChannel, sync_path
 from xiaoluozi.config import Settings, env_path
-from xiaoluozi.entry import handle, install
+from xiaoluozi.entry import handle, install, stream_handle
+from xiaoluozi.loop import Reply
 from xiaoluozi.errors import ModelError, ModelNotConfigured, ReplyError
 from xiaoluozi.history import History, history_path
 from xiaoluozi.log import get_logger, silence_history_access_log
@@ -118,6 +119,12 @@ def create_app(
         logger.info("响应 200 POST /api/handle\n%s", json.dumps(payload, ensure_ascii=False))
         return payload
 
+    @app.post("/api/handle/stream")
+    def post_stream(body: MessageIn):
+        logger.info("请求 POST /api/handle/stream %s", body.message)
+        install(app.state.loop, model_configured=app.state.model_configured)
+        return StreamingResponse(_stream_lines(body.message), media_type="application/x-ndjson")
+
     return app
 
 
@@ -129,6 +136,44 @@ def _turn_payload(turn) -> dict:
         "reply": turn.shown,
         "note": turn.note,
     }
+
+
+def _stream_lines(message: str):
+    try:
+        for item in stream_handle(message):
+            if isinstance(item, Reply):
+                payload = {"reply": item.text, "saved": item.saved, "note": item.note}
+                logger.info(
+                    "响应 200 POST /api/handle/stream\n%s",
+                    json.dumps(payload, ensure_ascii=False),
+                )
+                yield _ndjson(payload)
+            else:
+                yield _ndjson({"delta": item})
+    except ModelNotConfigured as exc:
+        yield _ndjson(_stream_error(503, str(exc)))
+    except ModelError as exc:
+        yield _ndjson(_stream_error(502, str(exc)))
+    except ReplyError as exc:
+        code = 400 if str(exc) == "先写一句话。" else 502
+        yield _ndjson(_stream_error(code, str(exc)))
+    except Exception as exc:
+        logger.info("流式回复失败 %s", exc)
+        yield _ndjson(_stream_error(500, "没能回复。"))
+
+
+def _ndjson(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False) + "\n"
+
+
+def _stream_error(status_code: int, message: str) -> dict:
+    payload = {"error": message}
+    logger.info(
+        "响应 %s POST /api/handle/stream\n%s",
+        status_code,
+        json.dumps(payload, ensure_ascii=False),
+    )
+    return payload
 
 
 def _error(status_code: int, message: str) -> JSONResponse:

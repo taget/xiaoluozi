@@ -1,3 +1,4 @@
+import json
 import logging
 
 from fastapi.testclient import TestClient
@@ -23,6 +24,16 @@ class StubLoop:
             raise self.error
         return self.result
 
+    def stream(self, message, channel="web"):
+        self.messages.append(message)
+        self.channels = getattr(self, "channels", [])
+        self.channels.append(channel)
+        if self.error:
+            raise self.error
+        yield from getattr(self, "pieces", ())
+        if self.result is not None:
+            yield self.result
+
 
 def test_page_loads_in_chinese_without_knowing_agents():
     client = TestClient(create_app(loop=StubLoop(), model_configured=True))
@@ -31,6 +42,7 @@ def test_page_loads_in_chinese_without_knowing_agents():
     assert response.status_code == 200
     text = response.text
     assert "小落子" in text
+    assert "/api/handle/stream" in text
     assert "agent_id" not in text
     assert "hindsight" not in text.lower()
 
@@ -134,6 +146,45 @@ def test_history_poll_is_dropped_from_the_access_log():
     assert quiet.filter(history) is False
     assert quiet.filter(failed) is True
     assert quiet.filter(handle) is True
+
+
+def test_stream_sends_each_piece_then_the_finished_reply():
+    loop = StubLoop(result=Reply(text="带伞。\n\n选用 chat。依据：日常对话。", saved=True))
+    loop.pieces = ["带", "伞。"]
+    client = TestClient(create_app(loop=loop, model_configured=True))
+
+    with client.stream("POST", "/api/handle/stream", json={"message": "今天要不要出门"}) as response:
+        assert response.status_code == 200
+        lines = [line for line in response.iter_lines() if line]
+
+    assert [json.loads(line) for line in lines] == [
+        {"delta": "带"},
+        {"delta": "伞。"},
+        {"reply": "带伞。\n\n选用 chat。依据：日常对话。", "saved": True, "note": None},
+    ]
+    assert loop.messages == ["今天要不要出门"]
+
+
+def test_stream_error_stays_on_one_line():
+    loop = StubLoop(error=ReplyError("先写一句话。"))
+    client = TestClient(create_app(loop=loop, model_configured=True))
+
+    with client.stream("POST", "/api/handle/stream", json={"message": "   "}) as response:
+        body = b"".join(response.iter_bytes()).decode()
+
+    assert response.status_code == 200
+    assert json.loads(body) == {"error": "先写一句话。"}
+    assert loop.messages == []
+
+
+def test_stream_unexpected_failure_is_one_error_line():
+    loop = StubLoop(error=RuntimeError("boom"))
+    client = TestClient(create_app(loop=loop, model_configured=True))
+
+    with client.stream("POST", "/api/handle/stream", json={"message": "你好"}) as response:
+        body = b"".join(response.iter_bytes()).decode()
+
+    assert json.loads(body) == {"error": "没能回复。"}
 
 
 def test_unconfigured_submit_does_not_call_the_loop():

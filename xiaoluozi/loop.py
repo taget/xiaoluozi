@@ -87,9 +87,23 @@ class Loop:
 
     def handle(self, message: str, *, channel: str = "web") -> Reply:
         with self._lock:
-            return self._handle(message, channel)
+            return self._collect(self._generate(message, channel))
 
-    def _handle(self, message: str, channel: str) -> Reply:
+    def stream(self, message: str, *, channel: str = "web"):
+        """Yield model text as it arrives, then the finished Reply. WeChat keeps using handle."""
+        with self._lock:
+            yield from self._generate(message, channel)
+
+    def _collect(self, events) -> Reply:
+        reply = None
+        for item in events:
+            if isinstance(item, Reply):
+                reply = item
+        if reply is None:
+            raise ReplyError("模型没有返回内容。")
+        return reply
+
+    def _generate(self, message: str, channel: str):
         text = message.strip()
         logger.info("回路开始 %s", text)
         if not text:
@@ -118,17 +132,22 @@ class Loop:
         logger.info(">>>>>> 回路意图 %s", decision.intent)
         context = self._revise_context(text, self._context(text, decision.agent_id))
         logger.info("上下文记忆 agent_id=%s\n%s", decision.agent_id, context.strip() or "没有可用的上下文。")
+        pieces = []
         try:
             # 模型如果返回技能允许的工具调用，代理会先执行，把结果交回模型，直到有文字回复。
-            reply = self.registry.get(decision.agent_id).handle(text, context=context, intent=decision.intent)
+            for piece in self._agent_text(decision.agent_id, text, context, decision.intent):
+                if not isinstance(piece, str) or not piece:
+                    continue
+                pieces.append(piece)
+                yield piece
         except Exception as exc:
             detail = str(exc).strip() or "模型调用失败。"
             logger.info("回路拒绝 %s", detail)
             raise ReplyError(detail) from exc
-        if not isinstance(reply, str) or not reply.strip():
+        reply = "".join(pieces).strip()
+        if not reply:
             logger.info("回路拒绝 模型没有返回内容。")
             raise ReplyError("模型没有返回内容。")
-        reply = reply.strip()
         shown = f"{reply}\n\n选用 {decision.agent_id}。依据：{decision.reason}"
         logger.info("回路回复 agent_id=%s %s", decision.agent_id, shown)
 
@@ -146,10 +165,21 @@ class Loop:
         except Exception as exc:
             logger.info("回路写入 turn_id=%s saved=false %s", turn.turn_id, exc)
             self._remember(turn, shown, UNSAVED_NOTE)
-            return Reply(text=shown, saved=False, note=UNSAVED_NOTE)
+            yield Reply(text=shown, saved=False, note=UNSAVED_NOTE)
+            return
         logger.info("回路写入 turn_id=%s saved=true", turn.turn_id)
         self._remember(turn, shown, None)
-        return Reply(text=shown, saved=True, note=None)
+        yield Reply(text=shown, saved=True, note=None)
+
+    def _agent_text(self, agent_id: str, text: str, context: str, intent: str):
+        agent = self.registry.get(agent_id)
+        source = getattr(agent, "stream", None)
+        if source is None:
+            whole = agent.handle(text, context=context, intent=intent)
+            if isinstance(whole, str) and whole:
+                yield whole
+            return
+        yield from source(text, context=context, intent=intent)
 
     def append_decision(self, message: str, decision) -> None:
         """Put one routing decision on that agent's queue. A full queue is saved, then cleared."""

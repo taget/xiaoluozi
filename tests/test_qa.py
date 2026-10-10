@@ -73,6 +73,49 @@ def test_qa_agent_forwards_context_and_intent():
     assert "用户问题：今天出门要带伞吗" in user
 
 
+def test_llm_stream_yields_each_piece(capsys):
+    class _Delta:
+        def __init__(self, content):
+            self.content = content
+
+    class _Choice:
+        def __init__(self, content):
+            self.delta = _Delta(content)
+
+    class _Chunk:
+        def __init__(self, content):
+            self.choices = [_Choice(content)]
+
+    class _Events:
+        def __init__(self):
+            self._parts = iter([_Chunk("带"), _Chunk(None), _Chunk("伞。")])
+            self.closed = False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self._parts)
+
+        def close(self):
+            self.closed = True
+
+    events = _Events()
+
+    class _Completions:
+        def create(self, **kwargs):
+            self.kwargs = kwargs
+            return events
+
+    completions = _Completions()
+    pieces = list(LlmClient(_Client(completions), "demo-llm", "llm-secret").stream("系统", "今天呢"))
+
+    assert pieces == ["带", "伞。"]
+    assert completions.kwargs["stream"] is True
+    assert events.closed is True
+    assert "问答响应 带伞。" in capsys.readouterr().err
+
+
 def test_llm_request_prints_the_context_sent_to_the_backend(capsys):
     completions = _Completions("好。")
     client = LoggingOpenAI(_Client(completions), "llm-secret")

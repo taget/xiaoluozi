@@ -168,7 +168,7 @@ class JevClient:
 class ClosedLlm:
     """Stand-in used when the chat LLM is not configured. It never calls the network."""
 
-    def answer(self, system: str, message: str) -> str:
+    def answer(self, system: str, message: str, tools=None, env=None) -> str:
         logger.info("问答请求被拒绝 未配置")
         raise ModelNotConfigured(_LLM_NOT_CONFIGURED)
 
@@ -216,7 +216,46 @@ class LlmClient:
         logger.info("问答响应 %s", self._redact(text, secrets))
         return text
 
-    def _create(self, messages: list, tools: list, secrets=()):
+    def stream(self, system: str, message: str, tools=None, env=None):
+        """Yield the answer as the model produces it. Tool rounds finish before any text is yielded."""
+        if tools:
+            yield self.answer(system, message, tools=tools, env=env)
+            return
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": message},
+        ]
+        secrets = _secret_values(env)
+        parts: list[str] = []
+        response = self._create(messages, [], secrets, stream=True)
+        try:
+            for piece in _delta_text(response):
+                parts.append(piece)
+                yield piece
+        except (ModelError, ModelNotConfigured):
+            raise
+        except APITimeoutError as exc:
+            logger.info("问答请求失败 超时 %s", self._redact(str(exc), secrets))
+            raise ModelError("问答模型调用超时。") from exc
+        except APIConnectionError as exc:
+            logger.info("问答请求失败 连不上 %s", self._redact(str(exc), secrets))
+            raise ModelError("连不上问答模型。") from exc
+        except APIStatusError as exc:
+            logger.info("问答响应 %s\n%s", exc.status_code, self._redact(exc.response.text, secrets))
+            raise ModelError(f"问答模型调用失败（{exc.status_code}）。") from exc
+        except Exception as exc:
+            logger.info("问答请求失败 %s", self._redact(str(exc), secrets))
+            raise ModelError("问答模型调用失败。") from exc
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+        text = "".join(parts).strip()
+        logger.info("问答响应 %s", self._redact(text, secrets))
+        if not text:
+            raise ModelError("模型返回里没有回复内容。")
+
+    def _create(self, messages: list, tools: list, secrets=(), stream: bool = False):
         logger.info(
             "问答请求 model=%s\n%s",
             self._model,
@@ -225,6 +264,8 @@ class LlmClient:
         kwargs = {"model": self._model, "messages": messages}
         if tools:
             kwargs["tools"] = tools
+        if stream:
+            kwargs["stream"] = True
         try:
             return self._client.chat.completions.create(**kwargs)
         except APITimeoutError as exc:
@@ -249,6 +290,17 @@ class LlmClient:
             if value and value in text:
                 text = text.replace(value, "[redacted]")
         return text
+
+
+def _delta_text(response):
+    for chunk in response:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        piece = getattr(delta, "content", None) if delta is not None else None
+        if piece:
+            yield piece
 
 
 def _secret_values(env) -> tuple[str, ...]:

@@ -54,7 +54,7 @@ Skill 放在 `xiaoluozi/skills/<name>/SKILL.md`，按 Agent Skills 组织。fron
 - Jev 客户端 POST systemone，请求体是 `model`、`state`、`questions`。问题只有 `choice`、`score`、`noul`。不发 `messages`。
 - 代理用 `.env` 里的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME`。地址如果已经以 `/chat/completions` 结尾，客户端会先去掉这段再追加。请求体是 `model` 和 `messages`，第一条是该代理自己的系统提示词。
 - 回路在选定代理后拼该代理的上下文：本地最近对话里这个 `agent_id` 的 8 轮，再 `memory.recall(message, agent_id)`。最后调用 `memory.retain_turn`，标签含 `agent:{agent_id}`。代理这次调用上的注入和写入由 `wrap_openai` 完成。Hindsight 的地址和 bank id 从 `.env` 传给包装器。
-- 页面只呈现回复、是否写入，以及失败说明。选用哪个代理和决策依据写在回复末尾，不另开一块，也不展开认知原文。网页和微信的回合都出现在同一条对话里，微信来的那一句标成「微信」。
+- 页面只呈现回复、是否写入，以及失败说明。选用哪个代理和决策依据写在回复末尾，不另开一块，也不展开认知原文。网页这一轮走 `POST /api/handle/stream`，模型吐出的文字先按段显示，结束后再补上选用的代理。微信仍调用 `handle`，等整句回复。网页和微信的回合都出现在同一条对话里，微信来的那一句标成「微信」。
 - `app` 关闭了 OpenAPI 文档。服务绑定 `0.0.0.0:8741`。微信通道在 `WEIXIN_ENABLED=true` 且有 token 时，由进程里的后台线程长轮询，收到文本后调用同一个 `handle`，`channel` 为 `weixin`。
 
 ## 开发

@@ -373,6 +373,23 @@ def test_failed_route_reuses_the_latest_decision_without_enqueue():
     assert "明天呢" in llm.calls[1]["message"]
 
 
+def test_stream_yields_pieces_and_handle_joins_the_same_reply():
+    model = FakeModel([_route_answer()])
+    llm = FakeLlm("带伞。", pieces=["带", "伞。"])
+    memory = FakeMemory()
+    loop = _loop(model, memory, llm)
+
+    streamed = list(loop.stream("今天要不要出门"))
+
+    assert streamed[:-1] == ["带", "伞。"]
+    assert streamed[-1].text == f"带伞。\n\n选用 chat。依据：{ChatAgent.description}"
+    assert streamed[-1].saved is True
+    joined = _loop(FakeModel([_route_answer()]), FakeMemory(), FakeLlm("带伞。", pieces=["带", "伞。"])).handle(
+        "今天要不要出门"
+    )
+    assert joined.text == streamed[-1].text
+
+
 def test_decision_queue_limit_must_be_positive():
     try:
         _loop(FakeModel([]), FakeMemory(), decision_limit=0)

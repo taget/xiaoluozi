@@ -1,4 +1,4 @@
-from xiaoluozi.agents.support import install, reply
+from xiaoluozi.agents.support import install, reply, stream_reply
 
 
 class ChatAgent:
@@ -19,3 +19,6 @@ class ChatAgent:
 
     def handle(self, message: str, *, context: str = "", intent: str = "") -> str:
         return reply(self, message, context=context, intent=intent)
+
+    def stream(self, message: str, *, context: str = "", intent: str = ""):
+        yield from stream_reply(self, message, context=context, intent=intent)

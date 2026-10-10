@@ -44,9 +44,10 @@ class FakeMemory:
 
 
 class FakeLlm:
-    def __init__(self, text="带伞。", error=None):
+    def __init__(self, text="带伞。", error=None, pieces=None):
         self.text = text
         self.error = error
+        self.pieces = pieces
         self.calls = []
 
     def answer(self, system, message, tools=None, env=None):
@@ -56,6 +57,10 @@ class FakeLlm:
         if self.error is not None:
             raise self.error
         return self.text
+
+    def stream(self, system, message, tools=None, env=None):
+        text = self.answer(system, message, tools=tools, env=env)
+        yield from self.pieces if self.pieces is not None else (text,)
 
 
 class SpyAgent:
