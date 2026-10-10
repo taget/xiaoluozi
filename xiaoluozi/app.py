@@ -85,7 +85,7 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def index():
         logger.info("请求 GET /")
-        return HTMLResponse(_PAGE)
+        return HTMLResponse(_PAGE, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/status")
     def status():
@@ -123,7 +123,11 @@ def create_app(
     def post_stream(body: MessageIn):
         logger.info("请求 POST /api/handle/stream %s", body.message)
         install(app.state.loop, model_configured=app.state.model_configured)
-        return StreamingResponse(_stream_lines(body.message), media_type="application/x-ndjson")
+        return StreamingResponse(
+            _stream_lines(body.message),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     return app
 

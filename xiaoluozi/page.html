@@ -841,6 +841,26 @@
       turn.scrollIntoView({ block: "end" });
     }
 
+    function paintDelta(turn, delta) {
+      const current = turn.dataset.live || "";
+      const full = current + delta;
+      if (delta.length <= 16) {
+        showLive(turn, full);
+        return Promise.resolve();
+      }
+      const step = Math.max(1, Math.ceil(delta.length / 24));
+      let count = current.length;
+      return new Promise((resolve) => {
+        const tick = () => {
+          count = Math.min(full.length, count + step);
+          showLive(turn, full.slice(0, count));
+          if (count < full.length) requestAnimationFrame(tick);
+          else resolve();
+        };
+        requestAnimationFrame(tick);
+      });
+    }
+
     function showFailure(turn, text) {
       turn.querySelectorAll(".pending, .reply, .decision, .note").forEach((node) => node.remove());
       const fail = document.createElement("p");
@@ -861,11 +881,11 @@
           buffer = lines.pop() || "";
           for (const line of lines) {
             const trimmed = line.trim();
-            if (trimmed) onEvent(JSON.parse(trimmed));
+            if (trimmed) await onEvent(JSON.parse(trimmed));
           }
           if (done) break;
         }
-        if (buffer.trim()) onEvent(JSON.parse(buffer.trim()));
+        if (buffer.trim()) await onEvent(JSON.parse(buffer.trim()));
       } finally {
         try { await reader.cancel(); } catch (err) { /* 连接已经结束。 */ }
       }
@@ -968,13 +988,13 @@
           throw failure;
         }
         let note = "";
-        await readNdjson(response, (event) => {
+        await readNdjson(response, async (event) => {
           if (event.error) {
             const failure = new Error("stream");
             failure.detail = event.error;
             throw failure;
           }
-          if (event.delta) showLive(turn, (turn.dataset.live || "") + event.delta);
+          if (event.delta) await paintDelta(turn, event.delta);
           if (typeof event.reply === "string") {
             showLive(turn, event.reply);
             note = event.note || "";

@@ -40,9 +40,11 @@ def test_page_loads_in_chinese_without_knowing_agents():
     response = client.get("/")
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
     text = response.text
     assert "小落子" in text
     assert "/api/handle/stream" in text
+    assert "paintDelta" in text
     assert "agent_id" not in text
     assert "hindsight" not in text.lower()
 
