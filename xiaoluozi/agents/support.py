@@ -11,18 +11,22 @@ def install(agent, llm, skills=(), env=None) -> None:
 
 def reply(agent, message: str, *, context: str = "", intent: str = "") -> str:
     system, request, tools, env, remember = _request(agent, message, context, intent)
-    return agent._llm.answer(system, request, tools=tools, env=env, remember=remember)
+    return agent._llm.answer(
+        system, request, tools=tools, env=env, remember=remember, recall_query=message
+    )
 
 
 def stream_reply(agent, message: str, *, context: str = "", intent: str = ""):
     system, request, tools, env, remember = _request(agent, message, context, intent)
     source = getattr(agent._llm, "stream", None)
     if source is None:
-        text = agent._llm.answer(system, request, tools=tools, env=env, remember=remember)
+        text = agent._llm.answer(
+            system, request, tools=tools, env=env, remember=remember, recall_query=message
+        )
         if text:
             yield text
         return
-    yield from source(system, request, tools=tools, env=env, remember=remember)
+    yield from source(system, request, tools=tools, env=env, remember=remember, recall_query=message)
 
 
 def _request(agent, message: str, context: str, intent: str):

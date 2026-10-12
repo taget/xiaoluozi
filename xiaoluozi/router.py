@@ -46,7 +46,7 @@ class Router:
         questions = {
             "agent_id": {
                 "type": "choice",
-                "instructions": "从后端代理里选一个处理这句话。没有合适的就选 none。",
+                "instructions": "从后端代理里选一个处理这句话。用户点名了已启用的代理 id 时，必须选那个代理。没有合适的就选 none。",
                 "criteria": criteria,
             },
             "intent": {

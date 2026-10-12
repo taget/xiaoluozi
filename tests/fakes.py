@@ -50,7 +50,7 @@ class FakeLlm:
         self.pieces = pieces
         self.calls = []
 
-    def answer(self, system, message, tools=None, env=None, remember=True):
+    def answer(self, system, message, tools=None, env=None, remember=True, recall_query=""):
         self.calls.append(
             {
                 "system": system,
@@ -58,14 +58,17 @@ class FakeLlm:
                 "tools": list(tools or []),
                 "env": dict(env or {}),
                 "remember": remember,
+                "recall_query": recall_query,
             }
         )
         if self.error is not None:
             raise self.error
         return self.text
 
-    def stream(self, system, message, tools=None, env=None, remember=True):
-        text = self.answer(system, message, tools=tools, env=env, remember=remember)
+    def stream(self, system, message, tools=None, env=None, remember=True, recall_query=""):
+        text = self.answer(
+            system, message, tools=tools, env=env, remember=remember, recall_query=recall_query
+        )
         yield from self.pieces if self.pieces is not None else (text,)
 
 

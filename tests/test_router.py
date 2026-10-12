@@ -28,6 +28,7 @@ def test_valid_choice_selects_that_agent_and_does_not_run_it(capsys):
     assert question["type"] == "choice"
     assert question["criteria"]["notes"] == "把一句话记成备忘。"
     assert question["criteria"]["none"] == "没有合适的代理。"
+    assert "用户点名了已启用的代理 id 时，必须选那个代理。" in question["instructions"]
     assert "chat" in question["criteria"]
     logged = capsys.readouterr().err
     assert "路由决定 agent_id=notes" in logged

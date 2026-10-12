@@ -71,6 +71,19 @@ def test_qa_agent_forwards_context_and_intent():
     assert "用户出门要带伞" in user
     assert "用户意图：在提问" in user
     assert "用户问题：今天出门要带伞吗" in user
+    assert "hindsight_query" not in completions.calls[0]
+
+
+def test_qa_recall_query_is_the_original_sentence():
+    completions = _Completions("带伞。")
+    agent = QaAgent(LlmClient(_Client(completions), "demo-llm", memory_configured=True))
+
+    agent.handle("今天出门要带伞吗", context="用户出门要带伞", intent="在提问")
+
+    call = completions.calls[0]
+    assert call["hindsight_query"] == "今天出门要带伞吗"
+    assert "用户出门要带伞" not in call["hindsight_query"]
+    assert "用户出门要带伞" in call["messages"][1]["content"]
 
 
 def test_llm_stream_yields_each_piece(capsys):

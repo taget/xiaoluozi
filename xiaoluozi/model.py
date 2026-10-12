@@ -168,7 +168,9 @@ class JevClient:
 class ClosedLlm:
     """Stand-in used when the chat LLM is not configured. It never calls the network."""
 
-    def answer(self, system: str, message: str, tools=None, env=None, remember: bool = True) -> str:
+    def answer(
+        self, system: str, message: str, tools=None, env=None, remember: bool = True, recall_query: str = ""
+    ) -> str:
         logger.info("问答请求被拒绝 未配置")
         raise ModelNotConfigured(_LLM_NOT_CONFIGURED)
 
@@ -209,14 +211,18 @@ class LlmClient:
         self._max_tool_rounds = max_tool_rounds
         self._memory_configured = memory_configured
 
-    def answer(self, system: str, message: str, tools=None, env=None, remember: bool = True) -> str:
+    def answer(
+        self, system: str, message: str, tools=None, env=None, remember: bool = True, recall_query: str = ""
+    ) -> str:
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": message},
         ]
         secrets = _secret_values(env)
         text = finish_answer(
-            lambda messages, tools: self._create(messages, tools, secrets, remember=remember),
+            lambda messages, tools: self._create(
+                messages, tools, secrets, remember=remember, recall_query=recall_query
+            ),
             messages,
             tools,
             env,
@@ -225,10 +231,14 @@ class LlmClient:
         logger.info("问答响应 %s", self._redact(text, secrets))
         return text
 
-    def stream(self, system: str, message: str, tools=None, env=None, remember: bool = True):
+    def stream(
+        self, system: str, message: str, tools=None, env=None, remember: bool = True, recall_query: str = ""
+    ):
         """Yield the answer as the model produces it. Tool rounds finish before any text is yielded."""
         if tools:
-            yield self.answer(system, message, tools=tools, env=env, remember=remember)
+            yield self.answer(
+                system, message, tools=tools, env=env, remember=remember, recall_query=recall_query
+            )
             return
         messages = [
             {"role": "system", "content": system},
@@ -236,7 +246,9 @@ class LlmClient:
         ]
         secrets = _secret_values(env)
         parts: list[str] = []
-        response = self._create(messages, [], secrets, stream=True, remember=remember)
+        response = self._create(
+            messages, [], secrets, stream=True, remember=remember, recall_query=recall_query
+        )
         try:
             for piece in _delta_text(response):
                 parts.append(piece)
@@ -264,7 +276,15 @@ class LlmClient:
         if not text:
             raise ModelError("模型返回里没有回复内容。")
 
-    def _create(self, messages: list, tools: list, secrets=(), stream: bool = False, remember: bool = True):
+    def _create(
+        self,
+        messages: list,
+        tools: list,
+        secrets=(),
+        stream: bool = False,
+        remember: bool = True,
+        recall_query: str = "",
+    ):
         logger.info(
             "问答请求 model=%s\n%s",
             self._model,
@@ -275,9 +295,13 @@ class LlmClient:
             kwargs["tools"] = tools
         if stream:
             kwargs["stream"] = True
-        if not remember and self._memory_configured:
-            kwargs["hindsight_inject_memories"] = False
-            kwargs["hindsight_store_conversations"] = False
+        if self._memory_configured:
+            query = recall_query.strip()
+            if query:
+                kwargs["hindsight_query"] = query
+            if not remember:
+                kwargs["hindsight_inject_memories"] = False
+                kwargs["hindsight_store_conversations"] = False
         try:
             return self._client.chat.completions.create(**kwargs)
         except APITimeoutError as exc:

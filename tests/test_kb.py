@@ -125,6 +125,7 @@ def test_kb_agent_asks_once_with_the_vault_tool():
     assert call["tools"][0]["function"]["name"] == "Vault"
     assert call["env"]["OBSIDIAN_VAULT_PATH"] == "/tmp/vault"
     assert call["remember"] is False
+    assert call["recall_query"] == "云计算怎么排障"
     assert len(llm.calls) == 1
 
 
@@ -136,6 +137,7 @@ def test_kb_omits_hindsight_kwargs_when_memory_is_off():
     call = completions.calls[0]
     assert "hindsight_inject_memories" not in call
     assert "hindsight_store_conversations" not in call
+    assert "hindsight_query" not in call
 
 
 def test_kb_tells_hindsight_not_to_store_when_memory_is_on():
@@ -145,10 +147,12 @@ def test_kb_tells_hindsight_not_to_store_when_memory_is_on():
         SkillCatalog().load(KbAgent.skill_ids),
     )
 
-    assert agent.handle("云计算怎么排障") == "知识库里没有。"
+    assert agent.handle("云计算怎么排障", context="上次看过日记") == "知识库里没有。"
     call = completions.calls[0]
     assert call["hindsight_inject_memories"] is False
     assert call["hindsight_store_conversations"] is False
+    assert call["hindsight_query"] == "云计算怎么排障"
+    assert "上次看过日记" not in call["hindsight_query"]
 
 
 def test_laya_chooses_kb_and_the_turn_is_not_stored():
