@@ -2,6 +2,7 @@ import httpx
 from openai import APIStatusError
 
 from xiaoluozi.agents.qa import QaAgent
+from xiaoluozi.agents.request import enabled_agent_note
 from xiaoluozi.errors import ModelError, ModelNotConfigured
 from xiaoluozi.model import ClosedLlm, LlmClient, LoggingOpenAI, chat_base_url
 
@@ -59,6 +60,39 @@ def test_qa_agent_sends_the_system_prompt_and_returns_the_answer(capsys):
     assert "今天出门要带伞吗" in logged
     assert "问答响应 出门带伞。" in logged
     assert "llm-secret" not in logged
+
+
+def test_answering_prompt_lists_every_enabled_agent():
+    note = enabled_agent_note(
+        [
+            ("chat", "日常对话。"),
+            ("qa", "回答问题。"),
+            ("cvm", "处理 CVM 运营。"),
+            ("kb", "检索个人知识库。"),
+        ],
+        "chat",
+    )
+    completions = _Completions("有四个。")
+    agent = QaAgent(LlmClient(_Client(completions), "demo-llm"))
+    agent.roster_note = note
+
+    agent.handle(
+        "查看现在有哪些 Agent？",
+        context="当前系统中有 chat 和 qa 两个 Agent，默认是 chat。",
+        intent="在提问",
+    )
+
+    call = completions.calls[0]
+    assert call["messages"][0] == {"role": "system", "content": agent.system}
+    user = call["messages"][1]["content"]
+    question_at = user.index("用户问题：查看现在有哪些 Agent？")
+    roster_at = user.index("当前已启用的代理：")
+    assert question_at < roster_at
+    assert user.index("chat 和 qa") < question_at
+    for agent_id in ("chat", "qa", "cvm", "kb"):
+        assert f"- {agent_id}：" in user[roster_at:]
+    assert "- chat：日常对话。（默认）" in user
+    assert "不要改用记忆里的旧名单。" in user
 
 
 def test_qa_agent_forwards_context_and_intent():

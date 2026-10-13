@@ -32,7 +32,7 @@ def stream_reply(agent, message: str, *, context: str = "", intent: str = ""):
 def _request(agent, message: str, context: str, intent: str):
     return (
         system_with_skills(agent.system, agent._skills),
-        agent_request(message, context, intent),
+        agent_request(message, context, intent, getattr(agent, "roster_note", "") or ""),
         tool_specs(agent._skills),
         agent._env,
         getattr(agent, "remembers", True),

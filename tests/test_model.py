@@ -6,8 +6,8 @@ from hindsight_litellm import wrap_openai
 
 from xiaoluozi.config import Settings
 from xiaoluozi.errors import ModelError, ModelNotConfigured
-from xiaoluozi.model import JevClient, SystemoneOpenAI
-from xiaoluozi.wiring import build_loop
+from xiaoluozi.model import ClosedLlm, JevClient, SystemoneOpenAI
+from xiaoluozi.wiring import _registry, build_loop
 
 
 def test_jev_client_posts_systemone_and_returns_answers(capsys):
@@ -157,6 +157,34 @@ def test_wrap_openai_stores_the_exchange_after_systemone():
     assert stored["user"] == "今天出门吗"
     assert stored["model"] == "jev-1.13.0"
     assert '"choice": "none"' in stored["assistant"]
+
+
+def test_registry_puts_the_enabled_roster_on_every_agent():
+    settings = Settings(
+        api_key="secret",
+        base_url="http://example.test/llmproxy",
+        model="jev-1.13.0",
+        hindsight_base_url="",
+        hindsight_bank_id="",
+        llm_api_key="",
+        llm_base_url="",
+        llm_model="",
+        laya_model="laya",
+        enabled_agents=("chat", "qa", "cvm", "kb"),
+        default_agent="chat",
+        weixin_enabled=False,
+        weixin_base_url="https://ilinkai.weixin.qq.com",
+        weixin_token="",
+        weixin_account_id="default",
+    )
+    registry, selectable = _registry(settings, ClosedLlm())
+
+    assert selectable == ["chat", "qa", "cvm", "kb"]
+    note = registry.get("qa").roster_note
+    assert note == registry.get("cvm").roster_note
+    for agent_id in selectable:
+        assert f"- {agent_id}：" in note
+    assert "（默认）" in note.split("- chat：", 1)[1].split("\n", 1)[0]
 
 
 def test_build_loop_wraps_openai_when_memory_is_configured():

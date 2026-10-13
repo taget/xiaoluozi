@@ -1,4 +1,5 @@
 import json
+import re
 
 from xiaoluozi.log import get_logger
 from xiaoluozi.registry import Registry
@@ -18,6 +19,18 @@ INTENTS = {
     "tell": "在说一件事",
     "greet": "在寒暄",
 }
+_CUE = re.compile(
+    r"(不要|别|不)?\s*(使用|选择|换成|交给|切到|指定|用)\s*([A-Za-z][A-Za-z0-9_-]*)",
+    re.IGNORECASE,
+)
+_LABELED = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Za-z][A-Za-z0-9_-]*)\s*(?:agent|代理)",
+    re.IGNORECASE,
+)
+_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 
 
 class RoutingDecision:
@@ -43,6 +56,11 @@ class Router:
         criteria = {agent_id: description for agent_id, description in agents}
         criteria[NONE_ID] = "没有合适的代理。"
         logger.info("路由候选 %s", "、".join(agent_id for agent_id, _description in agents))
+        named = named_agent(message, [agent_id for agent_id, _description in agents])
+        shown = message
+        if named:
+            shown = f"{message}\n（点名：必须选 {named}，优先级最高。）"
+            logger.info("用户点名 agent_id=%s，优先级最高。", named)
         questions = {
             "agent_id": {
                 "type": "choice",
@@ -55,8 +73,8 @@ class Router:
                 "criteria": dict(INTENTS),
             },
         }
-        answers = self._model.decide(fit_laya_state(message, context, agents, questions), questions)
-        return decision_from_answers(answers, criteria, self._default_agent)
+        answers = self._model.decide(fit_laya_state(shown, context, agents, questions), questions)
+        return decision_from_answers(answers, criteria, self._default_agent, named=named)
 
     def _agents(self) -> list[tuple[str, str]]:
         listing = self._registry.listing()
@@ -229,9 +247,45 @@ def _suffix(text: str, budget: int) -> str:
     return cut.lstrip()
 
 
-def decision_from_answers(answers, criteria: dict[str, str], default_agent: str = FALLBACK_ID) -> RoutingDecision:
+def named_agent(message: str, agent_ids: list[str]) -> str:
+    """Enabled id the user named. A later positive cue wins. Empty when none is named."""
+    enabled = {agent_id.lower(): agent_id for agent_id in agent_ids}
+    cued: list[str] = []
+    negated: set[str] = set()
+    for match in _CUE.finditer(message):
+        agent_id = enabled.get(match.group(3).lower())
+        if not agent_id:
+            continue
+        if match.group(1):
+            negated.add(agent_id)
+        else:
+            cued.append(agent_id)
+    if cued:
+        return cued[-1]
+    labeled = []
+    for match in _LABELED.finditer(message):
+        agent_id = enabled.get(match.group(1).lower())
+        if agent_id and agent_id not in negated:
+            labeled.append(agent_id)
+    if labeled:
+        return labeled[-1]
+    tokens: list[str] = []
+    for match in _TOKEN.finditer(message):
+        agent_id = enabled.get(match.group(1).lower())
+        if agent_id and agent_id not in negated and agent_id not in tokens:
+            tokens.append(agent_id)
+    if len(tokens) == 1:
+        return tokens[0]
+    return ""
+
+
+def decision_from_answers(
+    answers, criteria: dict[str, str], default_agent: str = FALLBACK_ID, named: str = ""
+) -> RoutingDecision:
     raw = answers if isinstance(answers, str) else json.dumps(answers, ensure_ascii=False)
     intent = _intent_label(answers)
+    if named and named in criteria:
+        return _decide(named, f"用户点名了 {named}。", raw, intent)
     choice = _choice(answers)
     if choice is None or choice == NONE_ID:
         return _decide(default_agent, f"没有合适的代理，已回退到 {default_agent}。", raw, intent)

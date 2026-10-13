@@ -17,6 +17,12 @@
       --warn-ink: #6a4b16;
       --fail-bg: #f8e6e1;
       --fail-ink: #6e2e26;
+      --mine-bg: #f6ddd4;
+      --mine-ink: #4e241c;
+      --mine-line: #e7c3b6;
+      --agent-bg: #e5eef3;
+      --agent-ink: #1c2830;
+      --agent-line: #d0dee6;
       --shadow: 0 18px 50px rgba(60, 40, 20, 0.08);
     }
 
@@ -112,14 +118,33 @@
       color: var(--muted);
     }
 
-    .turn { display: flex; flex-direction: column; gap: 0.35rem; }
+    .turn {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .mine,
+    .agent {
+      display: flex;
+      flex-direction: column;
+      gap: 0.22rem;
+      max-width: 84%;
+    }
+
+    .mine { align-self: flex-end; align-items: flex-end; }
+    .agent { align-self: flex-start; align-items: flex-start; }
 
     .who {
       margin: 0;
-      font-size: 0.75rem;
+      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", sans-serif;
+      font-size: 0.72rem;
       letter-spacing: 0.08em;
       color: var(--muted);
     }
+
+    .mine .who { color: var(--seal); }
+    .agent .who { color: #3d5c6e; }
 
     .said, .pending, .fail {
       margin: 0;
@@ -128,13 +153,27 @@
     }
 
     .said {
-      padding-bottom: 0.65rem;
-      border-bottom: 1px dashed var(--line);
+      padding: 0.62rem 0.85rem;
+      border-radius: 1.05rem 1.05rem 0.28rem 1.05rem;
+      background: var(--mine-bg);
+      color: var(--mine-ink);
+      border: 1px solid var(--mine-line);
+      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      font-size: 0.98rem;
+      font-weight: 500;
+      line-height: 1.55;
     }
 
     .reply {
       margin: 0;
+      padding: 0.7rem 0.9rem;
+      border-radius: 1.05rem 1.05rem 1.05rem 0.28rem;
+      background: var(--agent-bg);
+      color: var(--agent-ink);
+      border: 1px solid var(--agent-line);
+      font-family: "Songti SC", "Noto Serif SC", "Source Han Serif SC", "PMingLiU", serif;
       font-size: 1.05rem;
+      line-height: 1.7;
       word-break: break-word;
       overflow-wrap: anywhere;
     }
@@ -178,14 +217,14 @@
     .reply code {
       font-family: "SF Mono", "Menlo", "Consolas", monospace;
       font-size: 0.88em;
-      background: #f3eee6;
+      background: #fffdf8;
       padding: 0.05em 0.35em;
       border-radius: 0.3rem;
     }
 
     .reply pre {
       overflow-x: auto;
-      background: #f3eee6;
+      background: #fffdf8;
       border-radius: 0.65rem;
       padding: 0.75rem 0.85rem;
       font-family: "SF Mono", "Menlo", "Consolas", monospace;
@@ -251,18 +290,27 @@
     }
 
     .decision {
-      margin: 0.35rem 0 0;
+      margin: 0.15rem 0 0;
       color: var(--muted);
-      font-size: 0.82rem;
+      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", sans-serif;
+      font-size: 0.78rem;
     }
 
-    .pending { color: var(--muted); }
+    .agent .pending {
+      padding: 0.62rem 0.85rem;
+      border-radius: 1.05rem 1.05rem 1.05rem 0.28rem;
+      background: var(--agent-bg);
+      color: #5d7380;
+      border: 1px solid var(--agent-line);
+      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
+    }
 
     .fail {
       padding: 0.65rem 0.75rem;
-      border-radius: 0.65rem;
+      border-radius: 1.05rem 1.05rem 1.05rem 0.28rem;
       background: var(--fail-bg);
       color: var(--fail-ink);
+      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
     }
 
     .note {
@@ -834,10 +882,38 @@
     }
     /* md-end */
 
+    function speaker(label) {
+      const who = document.createElement("p");
+      who.className = "who";
+      who.textContent = label;
+      return who;
+    }
+
+    function mineBlock(label, text) {
+      const mine = document.createElement("div");
+      mine.className = "mine";
+      const said = document.createElement("p");
+      said.className = "said";
+      said.textContent = text;
+      mine.append(speaker(label), said);
+      return mine;
+    }
+
+    function ensureAgent(turn) {
+      let agent = turn.querySelector(".agent");
+      if (agent) return agent;
+      agent = document.createElement("div");
+      agent.className = "agent";
+      agent.append(speaker("小落子"));
+      turn.append(agent);
+      return agent;
+    }
+
     function showLive(turn, text) {
       turn.dataset.live = text;
-      turn.querySelectorAll(".pending, .reply, .decision, .note").forEach((node) => node.remove());
-      turn.append(renderReply(text));
+      const agent = ensureAgent(turn);
+      agent.querySelectorAll(".pending, .reply, .decision, .note").forEach((node) => node.remove());
+      agent.append(renderReply(text));
       turn.scrollIntoView({ block: "end" });
     }
 
@@ -862,11 +938,12 @@
     }
 
     function showFailure(turn, text) {
-      turn.querySelectorAll(".pending, .reply, .decision, .note").forEach((node) => node.remove());
+      const agent = ensureAgent(turn);
+      agent.querySelectorAll(".pending, .reply, .decision, .note").forEach((node) => node.remove());
       const fail = document.createElement("p");
       fail.className = "fail";
       fail.textContent = text;
-      turn.append(fail);
+      agent.append(fail);
     }
 
     async function readNdjson(response, onEvent) {
@@ -904,18 +981,14 @@
       for (const turn of turns) {
         const article = document.createElement("article");
         article.className = "turn";
-        const who = document.createElement("p");
-        who.className = "who";
-        who.textContent = turn.channel === "weixin" ? "微信" : "你";
-        const said = document.createElement("p");
-        said.className = "said";
-        said.textContent = turn.user || "";
-        article.append(who, said, renderReply(turn.reply || ""));
+        article.append(mineBlock(turn.channel === "weixin" ? "微信" : "我", turn.user || ""));
+        const agent = ensureAgent(article);
+        agent.append(renderReply(turn.reply || ""));
         if (turn.note) {
           const note = document.createElement("p");
           note.className = "note";
           note.textContent = turn.note;
-          article.append(note);
+          agent.append(note);
         }
         thread.append(article);
       }
@@ -958,16 +1031,11 @@
 
       const turn = document.createElement("article");
       turn.className = "turn";
-      const who = document.createElement("p");
-      who.className = "who";
-      who.textContent = "你";
-      const said = document.createElement("p");
-      said.className = "said";
-      said.textContent = message;
+      turn.append(mineBlock("我", message));
       const pending = document.createElement("p");
       pending.className = "pending";
       pending.textContent = "正在回复…";
-      turn.append(who, said, pending);
+      ensureAgent(turn).append(pending);
       thread.append(turn);
       thread.scrollIntoView({ block: "end" });
 
@@ -1004,7 +1072,7 @@
           const line = document.createElement("p");
           line.className = "note";
           line.textContent = note;
-          turn.append(line);
+          ensureAgent(turn).append(line);
         }
         sending = false;
         await loadHistory();

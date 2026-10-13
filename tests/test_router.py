@@ -1,6 +1,6 @@
 from tests.fakes import FakeModel, SpyAgent
 from xiaoluozi.registry import Registry
-from xiaoluozi.router import LAYA_MAX_TOKENS, Router, laya_request_tokens
+from xiaoluozi.router import LAYA_MAX_TOKENS, Router, laya_request_tokens, named_agent
 
 
 def _registry():
@@ -141,6 +141,65 @@ def test_oversized_context_is_compressed_before_laya(capsys):
     assert "记忆" * 20000 not in state
     assert "已省略" in state
     assert "路由上下文已压缩" in capsys.readouterr().err
+
+
+def test_a_named_agent_outranks_laya(capsys):
+    registry = Registry(
+        [
+            SpyAgent("chat", "日常对话。"),
+            SpyAgent("qa", "回答问题。"),
+            SpyAgent("kb", "检索知识库。"),
+        ]
+    )
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "chat"},
+                "intent": {"type": "choice", "choice": "ask"},
+            }
+        ]
+    )
+    decision = Router(model, registry, selectable=["chat", "qa", "kb"]).route(
+        "使用 kb agent，看看现在 kb 有哪些索引？"
+    )
+
+    assert decision.agent_id == "kb"
+    assert decision.intent == "在提问"
+    assert decision.reason == "用户点名了 kb。"
+    assert "必须选 kb，优先级最高。" in model.calls[0]["state"]
+    logged = capsys.readouterr().err
+    assert "用户点名 agent_id=kb" in logged
+    assert "路由决定 agent_id=kb" in logged
+
+
+def test_an_underscored_name_is_not_shortened_to_cvm():
+    assert named_agent("使用 cvm_low_level，看看子机拉起", ["cvm", "cvm_low_level"]) == "cvm_low_level"
+
+
+def test_a_later_positive_cue_wins_over_an_earlier_one():
+    registry = Registry([SpyAgent("chat", "日常对话。"), SpyAgent("kb", "检索知识库。")])
+    model = FakeModel([{"agent_id": {"type": "choice", "choice": "chat"}}])
+    decision = Router(model, registry).route("不要用 chat，用 kb")
+
+    assert decision.agent_id == "kb"
+    assert decision.reason == "用户点名了 kb。"
+
+
+def test_naming_two_agents_without_a_cue_keeps_laya_choice():
+    registry = Registry([SpyAgent("chat", "日常对话。"), SpyAgent("kb", "检索知识库。")])
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "chat"},
+                "intent": {"type": "choice", "choice": "ask"},
+            }
+        ]
+    )
+    decision = Router(model, registry).route("chat 和 kb 有什么区别")
+
+    assert decision.agent_id == "chat"
+    assert decision.intent == "在提问"
+    assert "点名" not in model.calls[0]["state"]
 
 
 def test_unknown_agent_id_falls_back_to_chat():

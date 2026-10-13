@@ -10,7 +10,7 @@
 
 1. 用用户的最新输入做成决策依赖，只把这一句交给 laya。
 2. 调用 laya：决定用哪个代理，并明确用户意图。不执行代理。结果进入该 `agent_id` 自己的决策队列。和队列里最新一条的代理、依据、意图都相同，则不入队。laya 失败时，沿用队列里最新一条，也不入队；队列是空的，这一轮拒绝。每个代理一条，默认 10 条，构造 `Loop` 时用 `decision_limit` 改。哪一条满了，就只把那一条写成一份记忆并清空；没满不写。
-3. 按选中的代理拉取它自己的上下文记忆：本地最近对话里只取这个 `agent_id` 的 8 轮，Hindsight 召回带上 `agent:{agent_id}`。再把用户的话、这份记忆和意图交给该代理。代理请求大模型。模型如果返回技能允许的工具调用，先执行，把结果交回模型，直到给出文字回复。没有工具调用时仍然只请求一次。同一轮里工具往返的上限是 `.env` 的 `TOOL_MAX_ROUNDS`，没写时是 8。
+3. 按选中的代理拉取它自己的上下文记忆：本地最近对话里只取这个 `agent_id` 的 8 轮，Hindsight 召回带上 `agent:{agent_id}`。再把用户的话、这份记忆和意图交给该代理。`migrate` 和 `vstation` 把这句话交给 Knot，不请求本地问答模型。`cvm_low_level` 先查知识库，没有材料就直接回复「知识库里没有查到相关记录。」；有材料时和其他问答代理一样请求大模型。模型如果返回技能允许的工具调用，先执行，把结果交回模型，直到给出文字回复。没有工具调用时仍然只请求一次。同一轮里工具往返的上限是 `.env` 的 `TOOL_MAX_ROUNDS`，没写时是 8。
 4. 写入：把这一轮交给记忆端口，标签带这个 `agent_id`。意图记在认知里。同时追加到本地最近对话，并记下是哪个代理。
 
 失败时的行为也是固定的：
@@ -20,22 +20,28 @@
 - 空句子：`ReplyError("先写一句话。")`，不写记忆。
 - laya 没有给出可识别的意图：代理照常处理，记忆里的认知写成 `没有识别出意图。`。
 - 记忆写入失败或未配置：回复照常返回，`saved=False`，`note` 为 `这一轮没有存进记忆。`。本地最近对话追加失败也不影响回复。
-- 代理标了 `remembers = False`：不召回，也不调用 `retain_turn`。记忆已配置时，这次大模型调用带上 `hindsight_inject_memories=false` 和 `hindsight_store_conversations=false`。没配记忆时不带这两个参数。本地最近对话仍追加。`saved=False`，`note` 用代理自己的 `memory_note`。`kb` 的说明是 `知识库只检索，这一轮不写入记忆。`。
+- 代理标了 `remembers = False`：不召回，也不调用 `retain_turn`。记忆已配置时，这次大模型调用带上 `hindsight_inject_memories=false` 和 `hindsight_store_conversations=false`。没配记忆时不带这两个参数。本地最近对话仍追加。`saved=False`，`note` 用代理自己的 `memory_note`。`kb` 的说明是 `知识库只检索，这一轮不写入记忆。`。`cvm_low_level` 的说明是 `CVM 底层知识库只检索，这一轮不写入记忆。`。
 - `.env` 里没有 `TYPESAFE_API_KEY`：抛出 `ModelNotConfigured`。不要编一条假回复，也不要发网络请求。
 - 问答模型没配好（缺 `LLM_API_KEY`、`LLM_BASE_URL` 或 `LLM_MODEL_NAME`）：代理抛出 `ModelNotConfigured`，回路收成 `ReplyError`，不写记忆，不发网络请求。
 - 工具调用超过 `TOOL_MAX_ROUNDS` 还没给出文字：抛出 `ReplyError`，不写记忆。`TOOL_MAX_ROUNDS` 不是正整数时，装配失败。
 
-laya 只做这一次决策：选代理，并明确意图。发给它的 `state` 里，用户问题是决策依赖，也就是这一轮的原话；当前上下文在这里是空的。用户这句话只是「好的」「是的」「确认」这类没有业务内容的话，并且上一轮记下的代理还在，就沿用那个代理，不再问 laya，也不回退到默认代理。代理选定之后才取它自己的上下文记忆，交给 `_revise_context`。这一步现在原样返回，以后改某个代理的记忆只改这里。做决定前打出「决策依赖」，交给代理前打出「上下文记忆」。召回失败或没有记忆时，这一轮继续；该代理没有记忆，才写「没有可用的上下文。」。laya 最多 8192 token。发送前若 `state` 和问题合计会超过这个上限，就压缩上下文。用户问题和代理名单保留。没有合适的代理时用默认代理，意图仍然传给它。用户点名了已启用的代理 id 时，必须选那个代理。只要启用了代理、且这句话不是确认语，就会询问 laya。
+laya 只做这一次决策：选代理，并明确意图。发给它的 `state` 里，用户问题是决策依赖，也就是这一轮的原话；当前上下文在这里是空的。用户这句话只是「好的」「是的」「确认」这类没有业务内容的话，并且上一轮记下的代理还在，就沿用那个代理，不再问 laya，也不回退到默认代理。代理选定之后才取它自己的上下文记忆，交给 `_revise_context`。这一步现在原样返回，以后改某个代理的记忆只改这里。做决定前打出「决策依赖」，交给代理前打出「上下文记忆」。召回失败或没有记忆时，这一轮继续；该代理没有记忆，才写「没有可用的上下文。」。laya 最多 8192 token。发送前若 `state` 和问题合计会超过这个上限，就压缩上下文。用户问题和代理名单保留。没有合适的代理时用默认代理，意图仍然传给它。用户点名了已启用的代理 id 时，必须选那个代理，比 laya 的分数优先。id 可以含下划线，`cvm_low_level` 不能收成 `cvm`。只要启用了代理、且这句话不是确认语，就会询问 laya。
 
-记忆已配置时，代理调用大模型经 `hindsight_litellm.wrap_openai`。`chat` 和 `qa` 共用问答客户端；包装器按调用线程各建一份，aiohttp 会话留在这条线程的事件循环上。laya 这次路由不走包装器，避免改写上面的 `state`。回路最后仍把这一轮写成一份文档，`document_id` 就是 `turn_id`，正文包含通道、用户的话、路由决定、模型回复和认知。不要把同一轮拆成多个共用 `document_id` 的条目，后写入的会盖掉先写入的。地址和 bank id 只从 `.env` 读取，不安装 Hindsight 服务。本地最近对话写在 `data/history.json`，和 Hindsight 是两份东西。
+记忆已配置时，代理调用大模型经 `hindsight_litellm.wrap_openai`。`chat`、`qa`、`cvm`、`kb`、`cvm_low_level` 共用一份问答客户端；包装器按调用线程各建一份，aiohttp 会话留在这条线程的事件循环上。`migrate` 和 `vstation` 不走这份客户端。laya 这次路由不走包装器，避免改写上面的 `state`。回路最后仍把这一轮写成一份文档，`document_id` 就是 `turn_id`，正文包含通道、用户的话、路由决定、模型回复和认知。不要把同一轮拆成多个共用 `document_id` 的条目，后写入的会盖掉先写入的。地址和 bank id 只从 `.env` 读取，不安装 Hindsight 服务。本地最近对话写在 `data/history.json`，和 Hindsight 是两份东西。
 
 ## 代理
 
 代理放在 `xiaoluozi/agents/`。每个代理有 `id`、`description` 和 `handle(message, context, intent) -> str`。
 
-`handle` 不选代理，不写记忆。它用自己的系统提示词，把上下文、意图和用户的话交给大模型。技能在 frontmatter 里写了 `allowed-tools` 时，模型可以返回这些工具调用；目前执行 `Bash` 和 `Vault`。`Vault` 只在知识库目录里检索和阅读。没有声明工具的代理仍然只请求一次。
+`handle` 不选代理，不写记忆。走问答模型的代理用自己的系统提示词，把上下文、意图和用户的话交给大模型。交给模型的用户消息末尾附上当前已启用的代理名单。用户问现在有哪些代理时，只按这份名单回答，并标明默认代理，不要改用记忆里的旧名单。技能在 frontmatter 里写了 `allowed-tools` 时，模型可以返回这些工具调用；目前执行 `Bash` 和 `Vault`。`Vault` 只在知识库目录里检索和阅读。没有声明工具的代理仍然只请求一次。
 
-`chat` 是日常对话，也是默认代理。`qa` 回答需要说明或解释的问题。`cvm` 负责 CVM 运营，加载 `yunxiao-ops`。`kb` 检索个人知识库，加载 `obsidian-kb`。知识库是 https://github.com/taget/obsidian 的本地检出，路径是 `OBSIDIAN_VAULT_PATH`。只检索，不改仓库，也不写入记忆。启用哪些代理由 `.env` 的 `ENABLED_AGENTS` 决定，默认用哪一个由 `DEFAULT_AGENT` 决定。代码里没有的 id 不能启用。这些代理用同一份问答模型，密钥是 `LLM_API_KEY`。
+`chat` 是日常对话，也是默认代理。`qa` 回答需要说明或解释的问题。`cvm` 负责 CVM 运营，加载 `yunxiao-ops`。`kb` 检索个人知识库，加载 `obsidian-kb`。知识库是 https://github.com/taget/obsidian 的本地检出，路径是 `OBSIDIAN_VAULT_PATH`。只检索，不改仓库，也不写入记忆。`chat`、`qa`、`cvm`、`kb`、`cvm_low_level` 用同一份问答模型，密钥是 `LLM_API_KEY`。
+
+`migrate` 负责 CVM 迁移。`vstation` 负责 vstation 排障。这两个都不请求本地问答模型。调用在 `xiaoluozi/agents/knot.py`，用 knot-sdk 把这句话交给对应的 agui 端点。同一进程里每个代理留着自己的 Knot 会话。默认地址分别是 `http://knot.woa.com/apigw/api/v1/agents/agui/687fb0de01614c5b84ba495919c5ff02` 和 `http://knot.woa.com/apigw/api/v1/agents/agui/dcfd1be40f2d430a98f689b9e96bd6c8`，地址里的 http 保持不变。令牌共用 `KNOT_API_TOKEN`，为空时不发请求。改某个已有代理的地址，写 `KNOT_AGENT_<ID>`，例如 `KNOT_AGENT_VSTATION`。`KNOT_API_URL` 仍可作为 `migrate` 的地址；`KNOT_AGENT_MIGRATE` 有值时用后者。再加一个 Knot 代理时，写 `KNOT_AGENT_<ID>=agui 地址` 和 `KNOT_AGENT_<ID>_DESCRIPTION`，并把 id 放进 `ENABLED_AGENTS`，不必再写一个类。id 用小写字母、数字和连字符，不能和已有代理重名。说明要写清它接什么句子。
+
+`cvm_low_level` 检索 CVM 底层知识库。虚拟化实现、子机拉起、compute、libvirt 这类底层文档用这个。查库存、配额和线上排障不用这个。它用同一份 `KNOT_API_TOKEN` 访问 MCP `http://mcp.knot.woa.com/open/mcp`，请求头 `X-knot-knowledge-uuids` 是 `c348be776d4545e4903acc295c19c72c`，工具是 `knowledgebase_search`。查到材料后才请求问答模型，材料接在用户问题后面，回答只根据这些材料并写出来源标题。没有材料就回复「知识库里没有查到相关记录。」。只检索，不写入记忆。
+
+启用哪些代理由 `.env` 的 `ENABLED_AGENTS` 决定，默认是 `chat,qa,cvm,kb,migrate,vstation,cvm_low_level`。默认用哪一个由 `DEFAULT_AGENT` 决定。代码里没有、也没有按上面配成 Knot 代理的 id 不能启用。
 
 Skill 放在 `xiaoluozi/skills/<name>/SKILL.md`，按 Agent Skills 组织。frontmatter 里有 `name` 和 `description`，`name` 与目录名一致，只用小写字母、数字和连字符。正文是给模型的说明。`references/`、`scripts/`、`assets/` 留在目录里，不放进这次请求。
 
@@ -43,19 +49,21 @@ Skill 放在 `xiaoluozi/skills/<name>/SKILL.md`，按 Agent Skills 组织。fron
 
 文件对不上、正文是空的，或点了未知 skill：装配失败，中文说明是哪一个。不请求模型，不写记忆。
 
-加一个专职代理时：
+加一个走问答模型的专职代理时：
 
 1. 新类放进 `xiaoluozi/agents/`，中文 `description` 写清它接什么句子。
 2. 在 `xiaoluozi/wiring.py` 的代理清单里用 `_make` 登记。它会把 `skills.load(新代理.skill_ids)` 和 `settings.pick(新代理.env_keys)` 交给它。`.env` 的 `ENABLED_AGENTS` 写上它的 id 之后，路由器才会把它交给 laya。代理要在 Bash 里用环境变量时，在类上写 `env_keys`，名字和 `.env` 的键一致。非空的值会带进这次命令。
 3. 补测试。启用了代理时，调用顺序是：laya 决策，然后该代理请求大模型。模型返回技能允许的工具调用时，先执行再继续请求。
 
+加一个 Knot 对话代理时，按上面的 `KNOT_AGENT_<ID>` 配置，不要再复制一份客户端。
+
 ## 边界
 
-- 密钥只放在项目根目录的 `.env`，不写进仓库、测试或页面。`Settings.load` 只读这个文件，不读进程环境变量。代理在 `env_keys` 里点名的键也从这里取。执行 Bash 时把非空的值带进这次命令，日志里打成 `[redacted]`。`cvm` 点的是 `YUNXIAO_SECRET_ID`、`YUNXIAO_SECRET_KEY`、`YUNXIAO_API_URL`。`kb` 点的是 `OBSIDIAN_VAULT_PATH`，只用来定位检出目录。微信扫码登录后的 bot token 写在 gitignore 的 `data/weixin/account.json`，只在 `WEIXIN_ENABLED=true` 且 `.env` 里没有 `WEIXIN_BOT_TOKEN` 时读取。相关键见 `README.md`。
+- 密钥只放在项目根目录的 `.env`，不写进仓库、测试或页面。`Settings.load` 只读这个文件，不读进程环境变量。代理在 `env_keys` 里点名的键也从这里取。执行 Bash 时把非空的值带进这次命令，日志里打成 `[redacted]`。`cvm` 点的是 `YUNXIAO_SECRET_ID`、`YUNXIAO_SECRET_KEY`、`YUNXIAO_API_URL`。`kb` 点的是 `OBSIDIAN_VAULT_PATH`，只用来定位检出目录。`migrate`、`vstation`、`cvm_low_level` 点的是 `KNOT_API_TOKEN`。Knot 对话代理还会读 `KNOT_AGENT_<ID>` 和 `KNOT_API_URL`。日志里不打令牌。微信扫码登录后的 bot token 写在 gitignore 的 `data/weixin/account.json`，只在 `WEIXIN_ENABLED=true` 且 `.env` 里没有 `WEIXIN_BOT_TOKEN` 时读取。相关键见 `README.md`。
 - Jev 客户端 POST systemone，请求体是 `model`、`state`、`questions`。问题只有 `choice`、`score`、`noul`。不发 `messages`。
 - 代理用 `.env` 里的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME`。地址如果已经以 `/chat/completions` 结尾，客户端会先去掉这段再追加。请求体是 `model` 和 `messages`，第一条是该代理自己的系统提示词。
 - 回路在选定代理后拼该代理的上下文：本地最近对话里这个 `agent_id` 的 8 轮，再 `memory.recall(message, agent_id)`。最后调用 `memory.retain_turn`，标签含 `agent:{agent_id}`。代理这次调用上的注入和写入由 `wrap_openai` 完成，召回查询用这一轮的原话，不拿整段上下文。Hindsight 的地址和 bank id 从 `.env` 传给包装器。
-- 页面只呈现回复、是否写入，以及失败说明。选用哪个代理和决策依据写在回复末尾，不另开一块，也不展开认知原文。网页这一轮走 `POST /api/handle/stream`，模型吐出的文字先按段显示，结束后再补上选用的代理。微信仍调用 `handle`，等整句回复。网页和微信的回合都出现在同一条对话里，微信来的那一句标成「微信」。
+- 页面只呈现回复、是否写入，以及失败说明。选用哪个代理和决策依据写在回复末尾，不另开一块，也不展开认知原文。网页上「我」的话在右边，小落子的回复在左边；微信来的那一句仍在右边，标成「微信」。网页这一轮走 `POST /api/handle/stream`，模型吐出的文字先按段显示，结束后再补上选用的代理。微信仍调用 `handle`，等整句回复。网页和微信的回合都出现在同一条对话里。
 - `app` 关闭了 OpenAPI 文档。服务绑定 `0.0.0.0:8741`。微信通道在 `WEIXIN_ENABLED=true` 且有 token 时，由进程里的后台线程长轮询，收到文本后调用同一个 `handle`，`channel` 为 `weixin`。
 
 ## 开发
@@ -67,6 +75,8 @@ pip install -e ".[dev]"
 pytest
 python -m xiaoluozi
 ```
+
+`knot-sdk` 不在公共 PyPI。`pip install` 找不到它时，改用 `https://mirrors.tencent.com/pypi/simple`。
 
 单元测试用 `tests/fakes.py` 里的假模型和假记忆，不访问 Venus 或 Hindsight。需要 Python 3.11+。
 

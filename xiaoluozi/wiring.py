@@ -6,8 +6,11 @@ from openai import OpenAI
 
 from xiaoluozi.agents.chat import ChatAgent
 from xiaoluozi.agents.cvm import CvmAgent
+from xiaoluozi.agents.cvm_low_level import CvmLowLevelAgent
 from xiaoluozi.agents.kb import KbAgent
+from xiaoluozi.agents.knot import KnotAgent, knot_specs
 from xiaoluozi.agents.qa import QaAgent
+from xiaoluozi.agents.request import enabled_agent_note
 from xiaoluozi.config import Settings
 from xiaoluozi.history import History
 from xiaoluozi.loop import Loop
@@ -51,8 +54,13 @@ def _registry(settings: Settings, llm):
         "chat": _make(ChatAgent, llm, skills, settings),
         "qa": _make(QaAgent, llm, skills, settings),
         "cvm": _make(CvmAgent, llm, skills, settings),
+        "cvm_low_level": _make(CvmLowLevelAgent, llm, skills, settings),
         "kb": _make(KbAgent, llm, skills, settings),
     }
+    for spec in knot_specs(settings.dotenv):
+        if spec.id in catalog:
+            raise ValueError(f"Knot 代理 {spec.id} 与已有代理重名。")
+        catalog[spec.id] = KnotAgent(llm, (), env=settings.dotenv, spec=spec)
     if settings.default_agent not in catalog:
         raise ValueError(f"未知的默认代理 {settings.default_agent}。")
     unknown = [agent_id for agent_id in settings.enabled_agents if agent_id not in catalog]
@@ -62,7 +70,13 @@ def _registry(settings: Settings, llm):
     for agent_id in list(settings.enabled_agents) + [settings.default_agent]:
         if agent_id not in order:
             order.append(agent_id)
-    return Registry([catalog[agent_id] for agent_id in order]), list(settings.enabled_agents)
+    agents = [catalog[agent_id] for agent_id in order]
+    by_id = {agent.id: agent.description for agent in agents}
+    enabled = [(agent_id, by_id[agent_id]) for agent_id in settings.enabled_agents if agent_id in by_id]
+    note = enabled_agent_note(enabled, settings.default_agent)
+    for agent in agents:
+        agent.roster_note = note
+    return Registry(agents), list(settings.enabled_agents)
 
 
 def _llm(settings: Settings):
