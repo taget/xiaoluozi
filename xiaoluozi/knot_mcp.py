@@ -118,8 +118,58 @@ def format_knowledge(text: str) -> str:
         body = str(chunk.get("chunk_content") or "").strip()
         if not body:
             continue
-        parts.append(f"【{title}】\n{body}")
+        block = f"【{title}】"
+        href = _href(chunk)
+        if href:
+            block += f"\n链接：{href}"
+        parts.append(f"{block}\n{body}")
     return _clip("\n\n".join(parts).strip())
+
+
+def citation_tail(answer: str, material: str) -> str:
+    """Lines to append so each distinct source becomes a link. Empty when none are new."""
+    seen: set[str] = set()
+    lines = []
+    body = answer or ""
+    for title, url in _links(material):
+        if url in seen or url in body:
+            continue
+        seen.add(url)
+        lines.append(f"{len(lines) + 1}. [{_link_label(title)}]({url})")
+    if not lines:
+        return ""
+    prefix = "\n\n" if body.strip() else ""
+    return prefix + "引用：\n" + "\n".join(lines)
+
+
+def _href(chunk: dict) -> str:
+    raw = chunk.get("href")
+    if isinstance(raw, str):
+        url = raw.strip()
+        if re.fullmatch(r"https?://[^\s)]+", url):
+            return url
+    doc_id = str(chunk.get("doc_id") or "").strip()
+    if re.fullmatch(r"\d{3,}", doc_id):
+        return f"https://iwiki.woa.com/p/{doc_id}"
+    return ""
+
+
+def _links(material: str):
+    lines = (material or "").splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"链接：(https?://[^\s)]+)", line.strip())
+        if not match:
+            continue
+        title = "未命名"
+        if index:
+            raw = lines[index - 1].strip()
+            if raw.startswith("【") and raw.endswith("】") and len(raw) > 2:
+                title = raw[1:-1].strip() or "未命名"
+        yield title, match.group(1)
+
+
+def _link_label(title: str) -> str:
+    return title.replace("[", "［").replace("]", "］") or "未命名"
 
 
 def _chunks(text: str):

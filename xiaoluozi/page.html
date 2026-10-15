@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>小落子</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
   <style>
     :root {
       --paper: #f6f1e8;
@@ -39,12 +40,92 @@
     }
 
     .desk {
-      width: min(40rem, calc(100% - 1.5rem));
+      width: min(84rem, calc(100% - 2rem));
       margin: 0 auto;
       padding: 1.25rem 0 2rem;
       min-height: 100vh;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-columns: 13rem minmax(0, 40rem);
+      justify-content: center;
+      align-items: start;
+      gap: 1rem;
+    }
+
+    .stage:not(:has(#chain[hidden])) {
+      grid-template-columns: 13rem minmax(0, 40rem) minmax(14rem, 20rem);
+    }
+
+    .talk {
       display: flex;
       flex-direction: column;
+      min-width: 0;
+      min-height: 100vh;
+      padding-bottom: 2rem;
+    }
+
+    .roster {
+      position: sticky;
+      top: 1rem;
+      max-height: calc(100vh - 2rem);
+      overflow: auto;
+      padding: 0.85rem 0.75rem;
+      background: var(--sheet);
+      border: 1px solid var(--line);
+      border-radius: 0.9rem;
+      box-shadow: var(--shadow);
+    }
+
+    .roster h2 {
+      margin: 0 0 0.65rem;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .roster ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 0.35rem;
+    }
+
+    button.pick {
+      display: grid;
+      width: 100%;
+      gap: 0.15rem;
+      text-align: left;
+      border: 1px solid transparent;
+      border-radius: 0.7rem;
+      padding: 0.5rem 0.6rem;
+      background: transparent;
+      color: var(--ink);
+      font-size: 0.92rem;
+    }
+
+    button.pick strong {
+      font-size: 0.95rem;
+    }
+
+    button.pick span {
+      color: var(--muted);
+      font-size: 0.75rem;
+      line-height: 1.35;
+    }
+
+    button.pick em {
+      font-style: normal;
+      color: var(--seal);
+      font-size: 0.72rem;
+    }
+
+    button.pick[aria-pressed="true"] {
+      background: var(--mine-bg);
+      border-color: var(--mine-line);
     }
 
     header {
@@ -289,11 +370,98 @@
       margin-right: 0.35rem;
     }
 
-    .decision {
-      margin: 0.15rem 0 0;
+    .open-app {
+      margin: 0.35rem 0.4rem 0.15rem 0;
+      padding: 0.28rem 0.75rem;
+      border: 1px solid var(--seal);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--seal);
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+
+    .open-app:disabled {
+      opacity: 0.7;
+    }
+
+    .chain {
+      position: sticky;
+      top: 1.25rem;
+      max-height: calc(100vh - 2.5rem);
+      overflow: auto;
+      background: var(--sheet);
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      box-shadow: var(--shadow);
+      padding: 0.9rem 0.95rem 1rem;
+    }
+
+    .chain[hidden] { display: none; }
+
+    .chain h2 {
+      margin: 0;
+      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
+      font-size: 1.15rem;
+      font-weight: 600;
+    }
+
+    .chain-for {
+      margin: 0.2rem 0 0.85rem;
       color: var(--muted);
-      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", sans-serif;
+      font-size: 0.82rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chain ol {
+      list-style: none;
+      margin: 0;
+      padding: 0.15rem 0 0;
+    }
+
+    .chain li {
+      position: relative;
+      margin: 0;
+      padding: 0 0 1.15rem 1.45rem;
+    }
+
+    .chain li::before {
+      content: "";
+      position: absolute;
+      left: 0.18rem;
+      top: 0.38rem;
+      width: 0.62rem;
+      height: 0.62rem;
+      border-radius: 50%;
+      background: var(--seal);
+      box-shadow: 0 0 0 3px rgba(143, 50, 40, 0.16);
+    }
+
+    .chain li:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      left: 0.43rem;
+      top: 1.15rem;
+      bottom: 0.15rem;
+      width: 2px;
+      background: #d9c7b4;
+    }
+
+    .chain strong {
+      display: block;
+      color: var(--ink);
+      font-size: 0.92rem;
+      font-weight: 600;
+    }
+
+    .chain p {
+      margin: 0.08rem 0 0;
+      color: var(--muted);
       font-size: 0.78rem;
+      line-height: 1.45;
+      word-break: break-word;
     }
 
     .agent .pending {
@@ -323,6 +491,36 @@
       display: flex;
       gap: 0.55rem;
       margin-top: 1rem;
+      align-items: center;
+    }
+
+    select {
+      flex: 0 1 11rem;
+      min-width: 5.5rem;
+      max-width: 11rem;
+      border: 1px solid var(--line);
+      background-color: var(--sheet);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 0.75rem 0.85rem;
+      font: inherit;
+      font-size: 0.92rem;
+      cursor: pointer;
+    }
+
+    select.held {
+      background-color: var(--mine-bg);
+      border-color: var(--mine-line);
+    }
+
+    select:focus {
+      outline: 2px solid rgba(143, 50, 40, 0.35);
+      border-color: var(--seal);
+    }
+
+    select:disabled {
+      cursor: progress;
+      opacity: 0.65;
     }
 
     label {
@@ -366,8 +564,16 @@
       opacity: 0.65;
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 860px) {
       .desk { width: min(100% - 1rem, 40rem); padding-top: 0.8rem; }
+      .talk { min-height: auto; padding-bottom: 0; }
+      .stage,
+      .stage:not(:has(#chain[hidden])) { grid-template-columns: 1fr; }
+      select { flex-basis: 7.2rem; max-width: 7.2rem; padding-left: 0.7rem; padding-right: 0.55rem; }
+      .roster { position: static; max-height: none; }
+      .roster ul { display: flex; overflow-x: auto; }
+      button.pick { width: auto; min-width: 8.5rem; }
+      .chain { position: static; max-height: none; }
       .sheet { min-height: 70vh; border-radius: 0.8rem; }
       h1 { font-size: 1.6rem; }
     }
@@ -375,6 +581,12 @@
 </head>
 <body>
   <div class="desk">
+    <div class="stage">
+    <aside id="roster" class="roster">
+      <h2>代理</h2>
+      <ul id="roster-list"></ul>
+    </aside>
+    <div class="talk">
     <header>
       <div class="seal" aria-hidden="true">落</div>
       <div>
@@ -390,11 +602,21 @@
       </div>
       <form id="composer">
         <label for="message">想说的话</label>
+        <select id="pick" aria-label="选用代理">
+          <option value="">自动</option>
+        </select>
         <input id="message" name="message" autocomplete="off" placeholder="写一句你想说的话" enterkeyhint="send">
         <button id="send" type="submit">发送</button>
       </form>
       <p id="form-error" class="note" hidden></p>
     </section>
+    </div>
+    <aside id="chain" class="chain" hidden>
+      <h2>调用链</h2>
+      <p id="chain-for" class="chain-for"></p>
+      <ol id="chain-steps"></ol>
+    </aside>
+    </div>
   </div>
   <script>
     const banner = document.getElementById("banner");
@@ -402,9 +624,12 @@
     const thread = document.getElementById("thread");
     const form = document.getElementById("composer");
     const input = document.getElementById("message");
+    const pick = document.getElementById("pick");
     const send = document.getElementById("send");
     const formError = document.getElementById("form-error");
     let sending = false;
+    let pinned = "";
+    let roster = [];
     let holdError = false;
     let historyKey = "";
     let weixinOn = false;
@@ -443,6 +668,135 @@
       } finally {
         send.disabled = false;
       }
+    }
+
+    function talkId() {
+      try {
+        let id = localStorage.getItem("xiaoluozi.talk");
+        if (!id) {
+          id = (window.crypto && crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
+          localStorage.setItem("xiaoluozi.talk", id);
+        }
+        return id;
+      } catch (err) {
+        return "default";
+      }
+    }
+
+    function readPin() {
+      try {
+        return localStorage.getItem("xiaoluozi.pick") || "";
+      } catch (err) {
+        return "";
+      }
+    }
+
+    function writePin(id) {
+      pinned = id || "";
+      try {
+        if (pinned) localStorage.setItem("xiaoluozi.pick", pinned);
+        else localStorage.removeItem("xiaoluozi.pick");
+      } catch (err) {}
+    }
+
+    function fillMenu() {
+      pick.replaceChildren();
+      const auto = document.createElement("option");
+      auto.value = "";
+      auto.textContent = "自动";
+      pick.append(auto);
+      const team = document.createElement("option");
+      team.value = "team";
+      team.textContent = "团队";
+      pick.append(team);
+      for (const item of roster) {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = item.id;
+        pick.append(option);
+      }
+      markSelected(pinned);
+    }
+
+    async function loadAgents() {
+      const list = document.getElementById("roster-list");
+      try {
+        const response = await fetch("/api/agents");
+        if (!response.ok) throw new Error("agents");
+        const data = await response.json();
+        roster = data.agents || [];
+        const saved = readPin();
+        pinned = saved === "team" || roster.some((item) => item.id === saved) ? saved : "";
+        if (saved && !pinned) writePin("");
+        list.replaceChildren();
+        for (const item of roster) {
+          const entry = document.createElement("li");
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "pick";
+          button.dataset.id = item.id;
+          const name = document.createElement("strong");
+          name.textContent = item.id;
+          const about = document.createElement("span");
+          about.textContent = item.description || "";
+          button.append(name, about);
+          if (item.default) {
+            const tag = document.createElement("em");
+            tag.textContent = "默认";
+            button.append(tag);
+          }
+          button.addEventListener("click", () => chooseAgent(item.id));
+          entry.append(button);
+          list.append(entry);
+        }
+        fillMenu();
+      } catch (err) {
+        roster = [];
+        list.replaceChildren();
+        fillMenu();
+      }
+    }
+
+    function chooseAgent(id) {
+      if (id === "team") {
+        writePin("team");
+        input.value = input.value.replace(/^@[A-Za-z][A-Za-z0-9_-]*\s*/, "");
+        markSelected("team");
+        input.focus();
+        return;
+      }
+      const known = roster.some((item) => item.id === id);
+      writePin(known ? id : "");
+      input.value = input.value.replace(/^@[A-Za-z][A-Za-z0-9_-]*\s*/, "");
+      markSelected(pinned);
+      input.focus();
+    }
+
+    function withPick(text) {
+      const body = String(text || "").trim();
+      const leading = body.match(/^@([A-Za-z][A-Za-z0-9_-]*)\s*/);
+      if (leading) {
+        const hit = roster.find((item) => item.id.toLowerCase() === leading[1].toLowerCase());
+        if (hit) {
+          if (hit.id !== pinned) {
+            writePin(hit.id);
+            markSelected(pinned);
+          }
+          const rest = body.slice(leading[0].length).trim();
+          return rest ? "@" + hit.id + " " + rest : "@" + hit.id;
+        }
+      }
+      if (!pinned || pinned === "team") return body;
+      return "@" + pinned + " " + body;
+    }
+
+    function markSelected(id) {
+      const agent = id === "team" ? "" : id;
+      for (const button of document.querySelectorAll("#roster-list .pick")) {
+        button.setAttribute("aria-pressed", button.dataset.id === agent ? "true" : "false");
+      }
+      if (pick.value !== id) pick.value = id;
+      pick.classList.toggle("held", Boolean(id));
     }
 
     /* md-start */
@@ -530,6 +884,35 @@
       parent.append(document.createTextNode(chunk.slice(last)));
     }
 
+    function openEntry(id, label) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "open-app";
+      button.textContent = label || "打开";
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        const original = button.textContent;
+        try {
+          const response = await fetch("/api/open", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id })
+          });
+          const data = await response.json();
+          if (data.url) {
+            window.location.href = data.url;
+            button.disabled = false;
+            return;
+          }
+          button.textContent = response.ok ? "已打开" : (data.error || "没打开");
+        } catch (err) {
+          button.textContent = original;
+          button.disabled = false;
+        }
+      });
+      return button;
+    }
+
     function appendInline(parent, text) {
       const source = String(text || "");
       let i = 0;
@@ -565,6 +948,12 @@
         }
         const wrapped = readWrapped(rest);
         if (wrapped) {
+          const appId = /^app:([a-z][a-z0-9-]{0,31})$/.exec(wrapped.url);
+          if (!wrapped.image && appId) {
+            parent.append(openEntry(appId[1], wrapped.label));
+            i += wrapped.length;
+            continue;
+          }
           const url = safeHttpUrl(wrapped.url);
           if (wrapped.image) {
             if (/^https?:\/\//i.test(url)) {
@@ -993,6 +1382,7 @@
         thread.append(article);
       }
       thread.lastElementChild.scrollIntoView({ block: "end" });
+      restoreTrace();
     }
 
     async function loadHistory() {
@@ -1011,23 +1401,83 @@
       }
     }
 
+    let liveSteps = [];
+    let liveMessage = "";
+
+    function clearTraces() {
+      liveSteps = [];
+      const chain = document.getElementById("chain");
+      const list = document.getElementById("chain-steps");
+      const caption = document.getElementById("chain-for");
+      if (list) list.replaceChildren();
+      if (caption) caption.textContent = "";
+      if (chain) chain.hidden = true;
+    }
+
+    function mountTrace() {
+      const chain = document.getElementById("chain");
+      const list = document.getElementById("chain-steps");
+      const caption = document.getElementById("chain-for");
+      if (!chain || !list || !liveSteps.length) return;
+      if (caption) caption.textContent = liveMessage;
+      list.replaceChildren();
+      for (const step of liveSteps) {
+        const item = document.createElement("li");
+        const title = document.createElement("strong");
+        title.textContent = step.title;
+        item.append(title);
+        for (const line of step.lines) {
+          const row = document.createElement("p");
+          row.textContent = line;
+          item.append(row);
+        }
+        list.append(item);
+      }
+      chain.hidden = false;
+    }
+
+    function restoreTrace() {
+      if (sending) return;
+      const last = thread.lastElementChild;
+      const said = last && last.classList.contains("turn") ? last.querySelector(".mine .said") : null;
+      if (liveSteps.length && said && said.textContent === liveMessage) {
+        mountTrace();
+        return;
+      }
+      const chain = document.getElementById("chain");
+      if (chain) chain.hidden = true;
+    }
+
+    function rememberTrace(event) {
+      const title = typeof event.title === "string" ? event.title.trim() : "";
+      const lines = Array.isArray(event.lines)
+        ? event.lines.filter((line) => typeof line === "string" && line.trim()).slice(0, 8)
+        : [];
+      if (!title || !lines.length) return;
+      liveSteps.push({ title, lines });
+    }
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const message = input.value.trim();
-      if (!message) {
+      const typed = input.value.trim();
+      if (!typed) {
         formError.hidden = false;
         formError.textContent = "先写一句话。";
         input.focus();
         return;
       }
+      const message = withPick(typed);
       formError.hidden = true;
       holdError = false;
+      clearTraces();
+      liveMessage = message;
       const empty = document.getElementById("empty");
       if (empty) empty.remove();
       input.value = "";
       sending = true;
       send.disabled = true;
       input.disabled = true;
+      pick.disabled = true;
 
       const turn = document.createElement("article");
       turn.className = "turn";
@@ -1046,7 +1496,7 @@
             "Content-Type": "application/json",
             "Accept": "application/x-ndjson"
           },
-          body: JSON.stringify({ message })
+          body: JSON.stringify({ message, conversation: talkId(), mode: pinned === "team" ? "team" : "" })
         });
         if (!response.ok || !response.body) {
           let data = {};
@@ -1063,6 +1513,10 @@
             throw failure;
           }
           if (event.delta) await paintDelta(turn, event.delta);
+          if (event.trace) {
+            rememberTrace(event.trace);
+            mountTrace();
+          }
           if (typeof event.reply === "string") {
             showLive(turn, event.reply);
             note = event.note || "";
@@ -1083,6 +1537,7 @@
         sending = false;
         send.disabled = false;
         input.disabled = false;
+        pick.disabled = false;
         input.focus();
       }
     });
@@ -1090,7 +1545,9 @@
     document.addEventListener("visibilitychange", () => {
       if (weixinOn && document.visibilityState === "visible") loadHistory();
     });
+    pick.addEventListener("change", () => chooseAgent(pick.value));
     loadStatus();
+    loadAgents();
     loadHistory();
   </script>
 </body>

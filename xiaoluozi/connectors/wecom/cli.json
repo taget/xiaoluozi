@@ -1,0 +1,27 @@
+{
+  "id": "wecom",
+  "skill": "wecom",
+  "runtime": {
+    "type": "node",
+    "version": ">=18"
+  },
+  "init": {
+    "darwin": "npm install -g @wecom/cli",
+    "linux": "npm install -g @wecom/cli",
+    "win32": "npm install -g @wecom/cli"
+  },
+  "versionCheck": {
+    "command": {
+      "darwin": "wecom-cli --version",
+      "linux": "wecom-cli --version",
+      "win32": "wecom-cli.cmd --version"
+    },
+    "minVersion": "1.3.0"
+  },
+  "status": {
+    "darwin": "wecom-cli auth show",
+    "linux": "wecom-cli auth show",
+    "win32": "wecom-cli.cmd auth show"
+  },
+  "statusMatch": "\\bauthorized\\b"
+}

@@ -1,0 +1,19 @@
+# 代理只能给这份名单里的应用准备打开入口。用户点击之后才打开。
+# id 给模型用。name 是按钮上的字。app 是 macOS 里 open -a 使用的应用名。
+# url 有值时，点击后打开这个地址，不再执行 open -a。
+
+[[app]]
+id = "chrome"
+name = "Chrome"
+app = "Google Chrome"
+
+[[app]]
+id = "iterm2"
+name = "iTerm2"
+app = "iTerm"
+
+[[app]]
+id = "wxwork"
+name = "企业微信"
+app = "企业微信"
+url = "wxwork://"

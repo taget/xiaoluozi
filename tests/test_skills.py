@@ -46,11 +46,15 @@ def test_named_skills_append_their_bodies_in_order(tmp_path):
     assert len(llm.calls) == 1
 
 
+class _Plain(ChatAgent):
+    skill_ids = ()
+
+
 def test_agent_without_named_skills_keeps_its_system_prompt():
     llm = FakeLlm("在的。")
-    agent = ChatAgent(llm)
+    agent = _Plain(llm)
     agent.handle("在吗")
-    assert llm.calls[0]["system"] == ChatAgent.system
+    assert llm.calls[0]["system"] == _Plain.system
 
 
 def test_missing_skill_is_refused(tmp_path):

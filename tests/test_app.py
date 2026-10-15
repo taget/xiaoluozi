@@ -3,11 +3,13 @@ import logging
 
 from fastapi.testclient import TestClient
 
-from tests.fakes import FakeMemory, FakeModel
+from tests.fakes import FakeMemory, FakeModel, SpyAgent
 from xiaoluozi.app import create_app
 from xiaoluozi.log import QuietHistoryAccess
 from xiaoluozi.errors import ModelError, ReplyError
-from xiaoluozi.loop import Reply
+from xiaoluozi.loop import Reply, Trace
+from xiaoluozi.registry import Registry
+from xiaoluozi.router import Router
 
 
 class StubLoop:
@@ -16,20 +18,29 @@ class StubLoop:
         self.error = error
         self.messages = []
 
-    def handle(self, message, channel="web"):
+    def handle(self, message, channel="web", conversation="", mode=""):
         self.messages.append(message)
         self.channels = getattr(self, "channels", [])
         self.channels.append(channel)
+        self.conversations = getattr(self, "conversations", [])
+        self.conversations.append(conversation)
+        self.modes = getattr(self, "modes", [])
+        self.modes.append(mode)
         if self.error:
             raise self.error
         return self.result
 
-    def stream(self, message, channel="web"):
+    def stream(self, message, channel="web", conversation="", mode=""):
         self.messages.append(message)
         self.channels = getattr(self, "channels", [])
         self.channels.append(channel)
+        self.conversations = getattr(self, "conversations", [])
+        self.conversations.append(conversation)
+        self.modes = getattr(self, "modes", [])
+        self.modes.append(mode)
         if self.error:
             raise self.error
+        yield from getattr(self, "traces", ())
         yield from getattr(self, "pieces", ())
         if self.result is not None:
             yield self.result
@@ -45,8 +56,32 @@ def test_page_loads_in_chinese_without_knowing_agents():
     assert "小落子" in text
     assert "/api/handle/stream" in text
     assert "paintDelta" in text
+    assert 'id="roster"' in text
+    assert 'id="pick"' in text
+    assert "/api/agents" in text
+    assert "chooseAgent" in text
+    assert "withPick" in text
+    assert "xiaoluozi.pick" in text
+    assert "xiaoluozi.talk" in text
+    assert "conversation: talkId()" in text
+    assert "团队" in text
+    assert 'mode: pinned === "team" ? "team" : ""' in text
+    assert text.index('id="roster"') < text.index('id="thread"')
+    assert text.index('id="thread"') < text.index('id="pick"')
+    assert text.index('id="pick"') < text.index('id="message"')
+    assert text.index('id="thread"') < text.index('id="chain"')
     assert "agent_id" not in text
     assert "hindsight" not in text.lower()
+    assert 'href="/favicon.ico"' in text
+
+
+def test_favicon_is_the_icon_file():
+    client = TestClient(create_app(loop=StubLoop(), model_configured=True))
+    response = client.get("/favicon.ico")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/x-icon")
+    assert response.content[:4] == b"\x00\x00\x01\x00"
 
 
 def test_status_reports_model_missing():
@@ -55,6 +90,23 @@ def test_status_reports_model_missing():
 
     assert response.status_code == 200
     assert response.json() == {"model_configured": False, "weixin_configured": False}
+
+
+def test_agents_endpoint_lists_the_enabled_roster():
+    registry = Registry([SpyAgent("chat", "日常对话。"), SpyAgent("wxwork", "企业微信。")])
+    loop = StubLoop()
+    loop.router = Router(FakeModel([]), registry, default_agent="chat", selectable=["chat", "wxwork"])
+    client = TestClient(create_app(loop=loop, model_configured=True))
+
+    response = client.get("/api/agents")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "agents": [
+            {"id": "chat", "description": "日常对话。", "default": True},
+            {"id": "wxwork", "description": "企业微信。", "default": False},
+        ]
+    }
 
 
 def test_page_error_is_not_a_successful_reply():
@@ -85,6 +137,16 @@ def test_handle_response_is_only_the_reply_and_optional_save_note(capsys):
     assert "入口接受 channel=web 今天要不要出门" in logged
     assert "响应 200 POST /api/handle" in logged
     assert "带伞比较好。" in logged
+
+
+def test_team_mode_reaches_the_loop():
+    loop = StubLoop(result=Reply(text="一起看过了。", saved=True))
+    client = TestClient(create_app(loop=loop, model_configured=True))
+    response = client.post("/api/handle", json={"message": "查一下", "conversation": "web-a", "mode": "team"})
+
+    assert response.status_code == 200
+    assert loop.modes == ["team"]
+    assert loop.conversations == ["web-a"]
 
 
 def test_model_error_is_shown_as_an_error():
@@ -165,6 +227,35 @@ def test_stream_sends_each_piece_then_the_finished_reply():
         {"reply": "带伞。\n\n选用 chat。依据：日常对话。", "saved": True, "note": None},
     ]
     assert loop.messages == ["今天要不要出门"]
+
+
+def test_stream_forwards_a_short_trace_before_the_reply():
+    loop = StubLoop(result=Reply(text="带伞。", saved=True))
+    loop.traces = [Trace("laya 入参", ("问题：今天要不要出门", "候选：chat"))]
+    loop.pieces = ["带伞。"]
+    client = TestClient(create_app(loop=loop, model_configured=True))
+
+    with client.stream("POST", "/api/handle/stream", json={"message": "今天要不要出门"}) as response:
+        lines = [json.loads(line) for line in response.iter_lines() if line]
+
+    assert lines[0] == {"trace": {"title": "laya 入参", "lines": ["问题：今天要不要出门", "候选：chat"]}}
+    assert lines[1] == {"delta": "带伞。"}
+    assert "reply" in lines[2]
+
+
+def test_page_hides_the_previous_trace_when_a_new_message_is_sent():
+    client = TestClient(create_app(loop=StubLoop(), model_configured=True))
+    text = client.get("/").text
+    submit = text.split("form.addEventListener", 1)[1]
+    assert submit.index("clearTraces()") < submit.index("/api/handle/stream")
+    assert 'id="chain"' in text
+    assert "/api/open" in text
+    assert "open-app" in text
+    assert text.index('id="thread"') < text.index('id="chain"')
+    assert "mountTrace(turn)" not in text
+    assert "rememberTrace" in text
+    assert "restoreTrace" in text
+    assert "agent_id" not in text
 
 
 def test_stream_error_stays_on_one_line():

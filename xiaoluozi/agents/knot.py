@@ -16,7 +16,7 @@ logger = get_logger("xiaoluozi.knot")
 MIGRATE_URL = "http://knot.woa.com/apigw/api/v1/agents/agui/687fb0de01614c5b84ba495919c5ff02"
 VSTATION_URL = "http://knot.woa.com/apigw/api/v1/agents/agui/dcfd1be40f2d430a98f689b9e96bd6c8"
 _AGUI = "/agents/agui/"
-_LOCAL_IDS = frozenset({"chat", "qa", "cvm", "kb"})
+_LOCAL_IDS = frozenset({"chat", "qa", "cvm", "kb", "wxwork", "perf-gap"})
 _AGENT_KEY = re.compile(r"^KNOT_AGENT_([A-Z0-9]+(?:_[A-Z0-9]+)*)$")
 _AGENT_ID = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _NOT_CONFIGURED = "Knot 还没配好。在 .env 里设置 KNOT_API_TOKEN 后再试。"
@@ -32,6 +32,7 @@ class KnotSpec:
     id: str
     description: str
     url: str
+    consultable: bool = False
 
 
 BUILTIN_KNOT_SPECS = (
@@ -39,11 +40,13 @@ BUILTIN_KNOT_SPECS = (
         "migrate",
         "处理 CVM 迁移。迁移方案、问卷、落地评估、从其他云迁到腾讯云这类句子用这个。",
         MIGRATE_URL,
+        consultable=True,
     ),
     KnotSpec(
         "vstation",
         "处理 vstation 排障。vstation 报错、实例创建失败、销毁失败、热迁移失败这类句子用这个。查库存和配额不用这个。",
         VSTATION_URL,
+        consultable=True,
     ),
 )
 
@@ -64,20 +67,21 @@ class KnotAgent:
             raise ValueError("Knot 代理还没有端点。")
         self.id = self.spec.id
         self.description = self.spec.description
+        self.consultable = bool(self.spec.consultable)
         self._opener = opener or open_knot
-        self._client = None
-        self._conversation = None
+        self._clients: dict[str, object] = {}
+        self._conversations: dict[str, object] = {}
         self._lock = threading.RLock()
 
-    def handle(self, message: str, *, context: str = "", intent: str = "") -> str:
-        return "".join(self.stream(message, context=context, intent=intent))
+    def handle(self, message: str, *, context: str = "", intent: str = "", conversation_id: str = "default") -> str:
+        return "".join(self.stream(message, context=context, intent=intent, conversation_id=conversation_id))
 
-    def stream(self, message: str, *, context: str = "", intent: str = ""):
+    def stream(self, message: str, *, context: str = "", intent: str = "", conversation_id: str = "default"):
         events = queue.Queue()
 
         def run():
             try:
-                self._talk(message, events.put)
+                self._talk(message, events.put, conversation_id)
             except BaseException as exc:
                 events.put(exc)
             else:
@@ -94,14 +98,13 @@ class KnotAgent:
 
     def close(self) -> None:
         with self._lock:
-            client = self._client
-            self._client = None
-            self._conversation = None
-        if client is None:
-            return
-        closer = getattr(client, "close", None)
-        if callable(closer):
-            closer()
+            clients = list(self._clients.values())
+            self._clients = {}
+            self._conversations = {}
+        for client in clients:
+            closer = getattr(client, "close", None)
+            if callable(closer):
+                closer()
 
     def __del__(self) -> None:
         try:
@@ -109,9 +112,9 @@ class KnotAgent:
         except Exception:
             return None
 
-    def _talk(self, message: str, emit) -> None:
+    def _talk(self, message: str, emit, conversation_id: str = "default") -> None:
         with self._lock:
-            conversation = self._conversation_for()
+            conversation = self._conversation_for(conversation_id)
             writer = _SseWriter(emit)
             try:
                 conversation.chat(ChatRequest(message=message), writer)
@@ -124,19 +127,23 @@ class KnotAgent:
             if not writer.saw_text:
                 raise ReplyError(_EMPTY)
 
-    def _conversation_for(self):
+    def _conversation_for(self, conversation_id: str = "default"):
+        key = (conversation_id or "default").strip() or "default"
         with self._lock:
-            if self._conversation is None:
-                token = _token(self._env)
-                api_url = resolve_knot_url(self.spec, self._env)
-                logger.info("Knot 请求 agent_id=%s %s", self.id, api_url)
-                try:
-                    client, agent_id = self._opener(token, api_url)
-                except ValueError as exc:
-                    raise ReplyError(_BAD_URL) from exc
-                self._client = client
-                self._conversation = client.new_conversation(agent_id)
-            return self._conversation
+            cached = self._conversations.get(key)
+            if cached is not None:
+                return cached
+            token = _token(self._env)
+            api_url = resolve_knot_url(self.spec, self._env)
+            logger.info("Knot 请求 agent_id=%s conversation=%s %s", self.id, key, api_url)
+            try:
+                client, agent_id = self._opener(token, api_url)
+            except ValueError as exc:
+                raise ReplyError(_BAD_URL) from exc
+            self._clients[key] = client
+            conversation = client.new_conversation(agent_id)
+            self._conversations[key] = conversation
+            return conversation
 
 
 def knot_env_key(agent_id: str) -> str:

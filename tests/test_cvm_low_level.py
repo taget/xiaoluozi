@@ -6,7 +6,14 @@ import pytest
 from tests.fakes import FakeLlm
 from xiaoluozi.agents.cvm_low_level import CvmLowLevelAgent
 from xiaoluozi.errors import ReplyError
-from xiaoluozi.knot_mcp import KNOWLEDGE_UUID, SEARCH_DOMAIN, KnotMcp, format_knowledge, search_keywords
+from xiaoluozi.knot_mcp import (
+    KNOWLEDGE_UUID,
+    SEARCH_DOMAIN,
+    KnotMcp,
+    citation_tail,
+    format_knowledge,
+    search_keywords,
+)
 
 _CHUNK = json.dumps(
     [{"chunk_title": "子机自动拉起", "chunk_content": "先检查 shutdown 文件。"}],
@@ -50,6 +57,57 @@ def test_mcp_search_sends_the_knowledge_uuid_and_formats_the_chunk():
     assert found == "【子机自动拉起】\n先检查 shutdown 文件。"
 
 
+def test_a_chunk_link_is_kept_and_repeated_documents_collapse():
+    raw = json.dumps(
+        [
+            {
+                "chunk_title": "【20250718】子机自动拉起",
+                "chunk_content": "先检查 shutdown 文件。",
+                "href": "https://iwiki.woa.com/p/4015625391",
+                "doc_id": "4015625391",
+            },
+            {
+                "chunk_title": "同一篇的后一节",
+                "chunk_content": "再看 compute。",
+                "href": "https://iwiki.woa.com/p/4015625391",
+            },
+            {
+                "chunk_title": "没有地址的笔记",
+                "chunk_content": "只有正文。",
+                "href": "javascript:alert(1)",
+                "doc_id": "12",
+            },
+        ],
+        ensure_ascii=False,
+    )
+
+    material = format_knowledge(raw)
+
+    assert material == (
+        "【【20250718】子机自动拉起】\n"
+        "链接：https://iwiki.woa.com/p/4015625391\n"
+        "先检查 shutdown 文件。\n\n"
+        "【同一篇的后一节】\n"
+        "链接：https://iwiki.woa.com/p/4015625391\n"
+        "再看 compute。\n\n"
+        "【没有地址的笔记】\n"
+        "只有正文。"
+    )
+    assert citation_tail("先看 shutdown 文件。", material) == (
+        "\n\n引用：\n1. [【20250718】子机自动拉起](https://iwiki.woa.com/p/4015625391)"
+    )
+    assert citation_tail("见 https://iwiki.woa.com/p/4015625391", material) == ""
+
+
+def test_a_numeric_doc_id_becomes_an_iwiki_link_when_href_is_missing():
+    raw = json.dumps(
+        [{"chunk_title": "libvirt 笔记", "chunk_content": "看 domain。", "doc_id": "4015625391"}],
+        ensure_ascii=False,
+    )
+
+    assert "链接：https://iwiki.woa.com/p/4015625391" in format_knowledge(raw)
+
+
 def test_an_empty_chunk_list_is_not_material():
     assert format_knowledge("[]") == ""
     assert search_keywords("子机，自动拉起。") == "子机;自动拉起"
@@ -78,7 +136,7 @@ def test_retrieved_excerpts_are_given_to_the_model_after_the_question():
         search=search,
     )
 
-    assert agent.handle("子机为什么会被自动拉起？", context="上次问过拉起", intent="在提问") == "先看 shutdown 文件。"
+    assert agent.handle("子机为什么会被自动拉起？", context="上次问过拉起", intent="在拿主意") == "先看 shutdown 文件。"
     call = llm.calls[0]
     assert call["system"] == agent.system
     assert call["remember"] is False
@@ -87,7 +145,24 @@ def test_retrieved_excerpts_are_given_to_the_model_after_the_question():
     material_at = call["message"].index("知识库检索结果：")
     assert question_at < material_at
     assert "先检查 shutdown 文件。" in call["message"][material_at:]
-    assert "上次问过拉起" in call["message"]
+    assert "在拿主意" not in call["message"]
+    assert "上次问过拉起" not in call["message"]
+
+
+def test_the_reply_appends_each_distinct_source_link():
+    llm = FakeLlm("先看 shutdown 文件。")
+    material = (
+        "【【20250718】子机自动拉起】\n"
+        "链接：https://iwiki.woa.com/p/4015625391\n"
+        "先检查 shutdown 文件。"
+    )
+    agent = CvmLowLevelAgent(llm, env={"KNOT_API_TOKEN": "token-test"}, search=lambda message: material)
+
+    assert agent.handle("子机为什么会被自动拉起？") == (
+        "先看 shutdown 文件。\n\n"
+        "引用：\n"
+        "1. [【20250718】子机自动拉起](https://iwiki.woa.com/p/4015625391)"
+    )
 
 
 def test_no_match_is_returned_without_calling_the_model():

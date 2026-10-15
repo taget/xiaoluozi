@@ -19,6 +19,7 @@ class CvmAgent:
 '''
     skill_ids = ("yunxiao-ops",)
     env_keys = ("YUNXIAO_SECRET_ID", "YUNXIAO_SECRET_KEY", "YUNXIAO_API_URL")
+    exclusive = True
 
     def __init__(self, llm, skills=(), env=None):
         install(self, llm, skills, env)

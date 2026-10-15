@@ -212,7 +212,14 @@ class LlmClient:
         self._memory_configured = memory_configured
 
     def answer(
-        self, system: str, message: str, tools=None, env=None, remember: bool = True, recall_query: str = ""
+        self,
+        system: str,
+        message: str,
+        tools=None,
+        env=None,
+        remember: bool = True,
+        recall_query: str = "",
+        delegate=None,
     ) -> str:
         messages = [
             {"role": "system", "content": system},
@@ -227,6 +234,7 @@ class LlmClient:
             tools,
             env,
             max_rounds=self._max_tool_rounds,
+            delegate=delegate,
         )
         logger.info("问答响应 %s", self._redact(text, secrets))
         return text

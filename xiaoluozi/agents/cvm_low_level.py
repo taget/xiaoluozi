@@ -1,7 +1,6 @@
-from xiaoluozi.agents.request import agent_request
 from xiaoluozi.agents.support import install
 from xiaoluozi.errors import ReplyError
-from xiaoluozi.knot_mcp import KnotMcp, search_keywords
+from xiaoluozi.knot_mcp import KnotMcp, citation_tail, search_keywords
 from xiaoluozi.log import get_logger
 
 logger = get_logger("xiaoluozi.cvm_low_level")
@@ -20,12 +19,14 @@ class CvmLowLevelAgent:
     )
     system = (
         "你是小落子的 CVM 底层知识库代理。只根据检索结果回答，并写出来源标题。"
+        "不要自己编造链接，文档链接会附在回答末尾。"
         "检索结果里没有的就说知识库里没有。不要编造。"
     )
     skill_ids = ()
     env_keys = ("KNOT_API_TOKEN",)
     remembers = False
     memory_note = "CVM 底层知识库只检索，这一轮不写入记忆。"
+    consultable = True
 
     def __init__(self, llm, skills=(), env=None, search=None):
         install(self, llm, skills, env)
@@ -39,16 +40,26 @@ class CvmLowLevelAgent:
         if not material:
             yield _EMPTY
             return
-        request = agent_request(message, context, intent) + "\n\n知识库检索结果：\n" + material
+        # 意图分类和本地对话不交给模型。模型曾把「在拿主意」当成要检索的主题。
+        request = f"用户问题：{message.strip()}\n\n知识库检索结果：\n{material}"
         source = getattr(self._llm, "stream", None)
         if source is None:
             text = self._llm.answer(
                 self.system, request, env=self._env, remember=False, recall_query=message
             )
-            if text:
-                yield text
+            shown = f"{text or ''}{citation_tail(text or '', material)}"
+            if shown.strip():
+                yield shown
             return
-        yield from source(self.system, request, env=self._env, remember=False, recall_query=message)
+        parts = []
+        for piece in source(self.system, request, env=self._env, remember=False, recall_query=message):
+            if not piece:
+                continue
+            parts.append(piece)
+            yield piece
+        tail = citation_tail("".join(parts), material)
+        if tail:
+            yield tail
 
     def _material(self, message: str) -> str:
         token = (self._env.get("KNOT_API_TOKEN") or "").strip()
@@ -57,5 +68,6 @@ class CvmLowLevelAgent:
             raise ReplyError(_NOT_CONFIGURED)
         if self._search is not None:
             return self._search(message)
-        logger.info("知识库检索")
-        return KnotMcp(token).search(message.strip(), search_keywords(message))
+        query = message.strip()
+        logger.info("知识库检索 %s", query[:80])
+        return KnotMcp(token).search(query, search_keywords(query))

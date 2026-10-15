@@ -159,7 +159,7 @@ class WeixinChannel:
                 context_token = None
             logger.info("微信收到 %s", text)
             try:
-                reply = self._handle(text, channel="weixin")
+                reply = self._handle(text, channel="weixin", conversation=f"weixin:{to_user}" if to_user else "weixin")
             except Exception as exc:
                 detail = str(exc).strip() or "这一轮没有回复。"
                 logger.info("微信回复失败 %s", detail)

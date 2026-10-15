@@ -13,6 +13,7 @@ class QaAgent:
     system = "你是小落子的问答代理。用简短的中文直接回答问题。不知道就说不知道，不要编造。"
     skill_ids = ()
     env_keys = ()
+    consultable = True
 
     def __init__(self, llm, skills=(), env=None):
         install(self, llm, skills, env)

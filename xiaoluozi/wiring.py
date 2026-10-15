@@ -8,8 +8,10 @@ from xiaoluozi.agents.chat import ChatAgent
 from xiaoluozi.agents.cvm import CvmAgent
 from xiaoluozi.agents.cvm_low_level import CvmLowLevelAgent
 from xiaoluozi.agents.kb import KbAgent
+from xiaoluozi.agents.perf_gap import PerfGapAgent
 from xiaoluozi.agents.knot import KnotAgent, knot_specs
 from xiaoluozi.agents.qa import QaAgent
+from xiaoluozi.agents.wxwork import WxworkAgent
 from xiaoluozi.agents.request import enabled_agent_note
 from xiaoluozi.config import Settings
 from xiaoluozi.history import History
@@ -41,11 +43,25 @@ def build_loop(settings: Settings | None = None, history: History | None = None)
 
 
 def _make(agent_cls, llm, skills: SkillCatalog, settings: Settings):
+    skill_ids = _skill_ids(agent_cls, settings)
+    kwargs = {"skill_ids": skill_ids} if agent_cls is ChatAgent else {}
     return agent_cls(
         llm,
-        skills.load(agent_cls.skill_ids),
+        skills.load(skill_ids),
         env=settings.pick(getattr(agent_cls, "env_keys", ())),
+        **kwargs,
     )
+
+
+def _skill_ids(agent_cls, settings: Settings) -> tuple[str, ...]:
+    if agent_cls is not ChatAgent or "CHAT_SKILLS" not in settings.dotenv:
+        return tuple(getattr(agent_cls, "skill_ids", ()))
+    ids: list[str] = []
+    for part in settings.dotenv.get("CHAT_SKILLS", "").split(","):
+        skill_id = part.strip()
+        if skill_id and skill_id not in ids:
+            ids.append(skill_id)
+    return tuple(ids)
 
 
 def _registry(settings: Settings, llm):
@@ -56,6 +72,8 @@ def _registry(settings: Settings, llm):
         "cvm": _make(CvmAgent, llm, skills, settings),
         "cvm_low_level": _make(CvmLowLevelAgent, llm, skills, settings),
         "kb": _make(KbAgent, llm, skills, settings),
+        "perf_gap": _make(PerfGapAgent, llm, skills, settings),
+        "wxwork": _make(WxworkAgent, llm, skills, settings),
     }
     for spec in knot_specs(settings.dotenv):
         if spec.id in catalog:

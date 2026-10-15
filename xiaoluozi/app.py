@@ -4,13 +4,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from xiaoluozi.channels.weixin import WeixinApi, WeixinChannel, sync_path
 from xiaoluozi.config import Settings, env_path
 from xiaoluozi.entry import handle, install, stream_handle
-from xiaoluozi.loop import Reply
+from xiaoluozi.loop import Reply, Trace
+from xiaoluozi.open_apps import find_open_app, launch_app, load_open_apps
 from xiaoluozi.errors import ModelError, ModelNotConfigured, ReplyError
 from xiaoluozi.history import History, history_path
 from xiaoluozi.log import get_logger, silence_history_access_log
@@ -20,10 +21,17 @@ logger = get_logger("xiaoluozi.app")
 silence_history_access_log()
 
 _PAGE = Path(__file__).with_name("page.html").read_text(encoding="utf-8")
+_FAVICON = Path(__file__).with_name("favicon.ico")
 
 
 class MessageIn(BaseModel):
     message: str = ""
+    conversation: str = ""
+    mode: str = ""
+
+
+class OpenIn(BaseModel):
+    id: str = ""
 
 
 def create_app(
@@ -87,6 +95,10 @@ def create_app(
         logger.info("请求 GET /")
         return HTMLResponse(_PAGE, headers={"Cache-Control": "no-store"})
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        return FileResponse(_FAVICON, media_type="image/x-icon")
+
     @app.get("/api/status")
     def status():
         payload = {
@@ -94,6 +106,20 @@ def create_app(
             "weixin_configured": app.state.weixin_configured,
         }
         logger.info("请求 GET /api/status\n%s", json.dumps(payload, ensure_ascii=False))
+        return payload
+
+    @app.get("/api/agents")
+    def agents_view():
+        router = getattr(app.state.loop, "router", None)
+        enabled = router.enabled() if router is not None and hasattr(router, "enabled") else []
+        default_id = getattr(router, "_default_agent", "") if router is not None else ""
+        payload = {
+            "agents": [
+                {"id": agent_id, "description": description, "default": agent_id == default_id}
+                for agent_id, description in enabled
+            ]
+        }
+        logger.info("请求 GET /api/agents %s", "、".join(item["id"] for item in payload["agents"]) or "没有")
         return payload
 
     @app.get("/api/history")
@@ -107,7 +133,7 @@ def create_app(
         logger.info("请求 POST /api/handle %s", body.message)
         install(app.state.loop, model_configured=app.state.model_configured)
         try:
-            reply = handle(body.message)
+            reply = handle(body.message, conversation=body.conversation, mode=body.mode)
         except ModelNotConfigured as exc:
             return _error(503, str(exc))
         except ModelError as exc:
@@ -124,10 +150,28 @@ def create_app(
         logger.info("请求 POST /api/handle/stream %s", body.message)
         install(app.state.loop, model_configured=app.state.model_configured)
         return StreamingResponse(
-            _stream_lines(body.message),
+            _stream_lines(body.message, body.conversation, body.mode),
             media_type="application/x-ndjson",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.post("/api/open")
+    def post_open(body: OpenIn):
+        try:
+            apps = load_open_apps()
+        except ValueError as exc:
+            return _error(500, str(exc))
+        app_entry = find_open_app(body.id, apps)
+        if app_entry is None:
+            return _error(404, "不能打开这个应用。")
+        if app_entry.url:
+            return {"url": app_entry.url}
+        try:
+            launch_app(app_entry)
+        except OSError:
+            return _error(502, "没有打开。")
+        logger.info("打开应用 %s", app_entry.id)
+        return {"opened": True}
 
     return app
 
@@ -142,9 +186,9 @@ def _turn_payload(turn) -> dict:
     }
 
 
-def _stream_lines(message: str):
+def _stream_lines(message: str, conversation: str = "", mode: str = ""):
     try:
-        for item in stream_handle(message):
+        for item in stream_handle(message, conversation=conversation, mode=mode):
             if isinstance(item, Reply):
                 payload = {"reply": item.text, "saved": item.saved, "note": item.note}
                 logger.info(
@@ -152,6 +196,8 @@ def _stream_lines(message: str):
                     json.dumps(payload, ensure_ascii=False),
                 )
                 yield _ndjson(payload)
+            elif isinstance(item, Trace):
+                yield _ndjson({"trace": {"title": item.title, "lines": list(item.lines)}})
             else:
                 yield _ndjson({"delta": item})
     except ModelNotConfigured as exc:

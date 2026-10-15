@@ -14,6 +14,7 @@ class KbAgent:
     env_keys = ("OBSIDIAN_VAULT_PATH",)
     remembers = False
     memory_note = "知识库只检索，这一轮不写入记忆。"
+    consultable = True
 
     def __init__(self, llm, skills=(), env=None):
         install(self, llm, skills, env)

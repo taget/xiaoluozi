@@ -1,4 +1,5 @@
 from xiaoluozi.agents.request import agent_request
+from xiaoluozi.connectors import require_connectors
 from xiaoluozi.skills import require_skills, system_with_skills
 from xiaoluozi.tools import tool_specs
 
@@ -6,6 +7,7 @@ from xiaoluozi.tools import tool_specs
 def install(agent, llm, skills=(), env=None) -> None:
     agent._llm = llm
     agent._skills = require_skills(agent.skill_ids, skills)
+    agent._connectors = require_connectors(getattr(agent, "connector_ids", ()), agent._skills)
     agent._env = dict(env or {})
 
 
@@ -30,8 +32,12 @@ def stream_reply(agent, message: str, *, context: str = "", intent: str = ""):
 
 
 def _request(agent, message: str, context: str, intent: str):
+    system = system_with_skills(agent.system, agent._skills)
+    note = (getattr(agent, "routing_note", "") or "").strip()
+    if note:
+        system = f"{system}\n\n{note}"
     return (
-        system_with_skills(agent.system, agent._skills),
+        system,
         agent_request(message, context, intent, getattr(agent, "roster_note", "") or ""),
         tool_specs(agent._skills),
         agent._env,

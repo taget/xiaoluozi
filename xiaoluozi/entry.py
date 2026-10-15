@@ -14,7 +14,7 @@ def install(loop, *, model_configured: bool) -> None:
     _model_configured = model_configured
 
 
-def handle(message: str, *, channel: str = "web") -> Reply:
+def handle(message: str, *, channel: str = "web", conversation: str = "", mode: str = "") -> Reply:
     """Entry the workbench and future adapters call. Returns the reply for this turn."""
     if not _model_configured or _loop is None:
         logger.info("入口拒绝 模型还没配好。")
@@ -24,10 +24,10 @@ def handle(message: str, *, channel: str = "web") -> Reply:
         logger.info("入口拒绝 先写一句话。")
         raise ReplyError("先写一句话。")
     logger.info("入口接受 channel=%s %s", channel, text)
-    return _loop.handle(text, channel=channel)
+    return _loop.handle(text, channel=channel, conversation=conversation, mode=mode)
 
 
-def stream_handle(message: str, *, channel: str = "web"):
+def stream_handle(message: str, *, channel: str = "web", conversation: str = "", mode: str = ""):
     """Web turn. Yields model text, then the same Reply handle would return."""
     if not _model_configured or _loop is None:
         logger.info("入口拒绝 模型还没配好。")
@@ -37,4 +37,4 @@ def stream_handle(message: str, *, channel: str = "web"):
         logger.info("入口拒绝 先写一句话。")
         raise ReplyError("先写一句话。")
     logger.info("入口接受 channel=%s %s", channel, text)
-    yield from _loop.stream(text, channel=channel)
+    yield from _loop.stream(text, channel=channel, conversation=conversation, mode=mode)

@@ -2,7 +2,7 @@ from tests.fakes import FakeLlm, FakeMemory, FakeModel, SpyAgent
 from xiaoluozi.history import History
 from xiaoluozi.agents.chat import ChatAgent
 from xiaoluozi.errors import MemoryError, ModelError, ModelNotConfigured, ReplyError
-from xiaoluozi.loop import Loop
+from xiaoluozi.loop import Loop, Trace
 from xiaoluozi.registry import Registry
 from xiaoluozi.router import INTENT_UNKNOWN, LAYA_MAX_TOKENS, Router, laya_request_tokens
 
@@ -48,6 +48,7 @@ def test_loop_asks_laya_then_passes_context_and_intent_to_the_agent(capsys):
     assert "上次说要出门" in llm.calls[0]["message"]
     assert "用户意图：在拿主意" in llm.calls[0]["message"]
     assert "用户问题：今天要不要出门" in llm.calls[0]["message"]
+    assert "这次没有找到专职代理" not in llm.calls[0]["system"]
     turn = memory.turns[0]
     assert turn.user_message == "今天要不要出门"
     assert turn.agent_id == "chat"
@@ -63,6 +64,42 @@ def test_loop_asks_laya_then_passes_context_and_intent_to_the_agent(capsys):
     assert "回路回复 agent_id=chat 带伞。" in logged
     assert f"选用 chat。依据：{ChatAgent.description}" in logged
     assert f"回路写入 turn_id={turn.turn_id} saved=true" in logged
+
+
+def test_missing_specialist_gives_laya_to_chat():
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "none"},
+                "intent": {"type": "choice", "choice": "ask"},
+            }
+        ]
+    )
+    llm = FakeLlm("我先回答能说的部分。")
+    result = _loop(model, FakeMemory(), llm).handle("帮我看看这个冷门问题")
+
+    system = llm.calls[0]["system"]
+    assert "这次没有找到专职代理" in system
+    assert '"choice": "none"' in system
+    assert result.text == "我先回答能说的部分。\n\n选用 chat。依据：没有合适的代理，已回退到 chat。"
+    assert "choice" not in result.text
+
+
+def test_a_later_chat_turn_drops_the_fallback_note():
+    model = FakeModel(
+        [
+            {"agent_id": {"type": "choice", "choice": "none"}},
+            {"agent_id": {"type": "choice", "choice": "chat"}},
+        ]
+    )
+    llm = FakeLlm("在的。")
+    loop = _loop(model, FakeMemory(), llm)
+
+    loop.handle("随便说说")
+    loop.handle("在吗")
+
+    assert "这次没有找到专职代理" in llm.calls[0]["system"]
+    assert "这次没有找到专职代理" not in llm.calls[1]["system"]
 
 
 def test_missing_intent_still_returns_the_reply():
@@ -184,6 +221,12 @@ def test_long_recall_is_shortened_for_laya_and_kept_for_the_agent():
     assert memory_text in llm.calls[0]["message"]
     assert "今天要不要出门" in state
     assert result.saved is True
+    streamed = list(_loop(FakeModel([_route_answer()]), FakeMemory(memories=[memory_text]), FakeLlm("带伞。")).stream("今天要不要出门"))
+    context_line = next(line for item in streamed if isinstance(item, Trace) and item.title == "代理入参" for line in item.lines if line.startswith("上下文："))
+    laya_lines = "\n".join(line for item in streamed if isinstance(item, Trace) and item.title == "laya 入参" for line in item.lines)
+    assert "共 20000 字" in context_line
+    assert memory_text not in context_line
+    assert ChatAgent.description not in laya_lines
 
 
 def test_ack_reuses_the_previous_agent_and_does_not_ask_laya():
@@ -207,6 +250,10 @@ def test_ack_reuses_the_previous_agent_and_does_not_ask_laya():
     assert "沿用上次的 cvm" in result.text
     assert cvm.requests[-1]["message"] == "好的。"
     assert history.latest().agent_id == "cvm"
+    streamed = [item for item in loop.stream("嗯") if isinstance(item, Trace)]
+    assert streamed[0].title == "laya"
+    assert "没有再问" in streamed[0].lines[0]
+    assert len(model.calls) == 1
 
 
 def test_ack_with_business_words_still_asks_laya():
@@ -380,8 +427,11 @@ def test_stream_yields_pieces_and_handle_joins_the_same_reply():
     loop = _loop(model, memory, llm)
 
     streamed = list(loop.stream("今天要不要出门"))
+    traces = [item for item in streamed if isinstance(item, Trace)]
+    text = [item for item in streamed if isinstance(item, str)]
 
-    assert streamed[:-1] == ["带", "伞。"]
+    assert [item.title for item in traces] == ["laya 入参", "laya 返回", "选用代理", "代理入参", "代理出参"]
+    assert text == ["带", "伞。"]
     assert streamed[-1].text == f"带伞。\n\n选用 chat。依据：{ChatAgent.description}"
     assert streamed[-1].saved is True
     joined = _loop(FakeModel([_route_answer()]), FakeMemory(), FakeLlm("带伞。", pieces=["带", "伞。"])).handle(
@@ -423,3 +473,255 @@ def test_web_and_weixin_share_the_same_recent_dialogue():
     assert [turn.channel for turn in turns] == ["web", "weixin"]
     assert turns[1].user_message == "明天呢"
     assert memory.turns[1].channel == "weixin"
+
+
+class _Voice:
+    def __init__(self, agent_id, description, text):
+        self.id = agent_id
+        self.description = description
+        self.text = text
+        self.consultable = True
+        self.seen = []
+        self.contexts = []
+
+    def handle(self, message, *, context="", intent=""):
+        self.seen.append(message)
+        self.contexts.append(context)
+        return self.text
+
+    def stream(self, message, *, context="", intent=""):
+        yield self.handle(message, context=context, intent=intent)
+
+
+def test_consultants_are_combined_into_one_reply_and_keep_their_own_text():
+    llm = FakeLlm("合成后的回答。")
+    kb = _Voice("kb", "笔记。", "笔记里有 shutdown。")
+    qa = _Voice("qa", "问答。", "先看 shutdown。")
+    registry = Registry([ChatAgent(llm), kb, qa])
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "kb", "confidence": 0.9},
+                "intent": {"type": "choice", "choice": "ask"},
+                "consultant_1": {"type": "choice", "choice": "qa"},
+                "consultant_2": {"type": "choice", "choice": "none"},
+            }
+        ]
+    )
+    history = History(None)
+    result = Loop(
+        registry=registry,
+        router=Router(model, registry),
+        model=model,
+        memory=FakeMemory(),
+        history=history,
+    ).handle("子机为什么拉起")
+
+    assert result.text == "合成后的回答。\n\n选用 kb。依据：笔记。\n参考了 qa。"
+    assert history.latest().parts == (("kb", "笔记里有 shutdown。"), ("qa", "先看 shutdown。"))
+    assert "笔记里有 shutdown" in llm.calls[-1]["message"]
+    assert "先看 shutdown" in llm.calls[-1]["message"]
+    assert kb.seen == ["子机为什么拉起"]
+
+
+def test_a_late_consultant_is_dropped_and_the_finished_answer_is_kept():
+    import time
+
+    class _Slow(_Voice):
+        def stream(self, message, *, context="", intent=""):
+            time.sleep(1)
+            yield "晚了"
+
+    llm = FakeLlm("不该合成。")
+    kb = _Voice("kb", "笔记。", "笔记里有。")
+    qa = _Slow("qa", "问答。", "晚了")
+    registry = Registry([ChatAgent(llm), kb, qa])
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "kb", "confidence": 1},
+                "consultant_1": {"type": "choice", "choice": "qa"},
+            }
+        ]
+    )
+    result = Loop(
+        registry=registry,
+        router=Router(model, registry),
+        model=model,
+        memory=FakeMemory(),
+        history=History(None),
+        agent_timeout=0.4,
+        round_timeout=0.4,
+    ).handle("查一下")
+
+    assert result.text.startswith("笔记里有。")
+    assert "晚了" not in result.text
+    assert llm.calls == []
+
+
+def test_the_same_agent_keeps_context_inside_one_conversation():
+    model = FakeModel([_route_answer(), _route_answer(), _route_answer()])
+    llm = FakeLlm("好。")
+    loop = _loop(model, FakeMemory(), llm, history=History(None))
+
+    loop.handle("第一句", conversation="web-a")
+    loop.handle("第二句", conversation="web-b")
+    loop.handle("第三句", conversation="web-a")
+
+    assert "第一句" not in llm.calls[1]["message"]
+    assert "第一句" in llm.calls[2]["message"]
+    assert "第二句" not in llm.calls[2]["message"]
+
+
+def test_a_partial_consultant_is_not_treated_as_finished():
+    import time
+
+    class _Partial(_Voice):
+        def stream(self, message, *, context="", intent=""):
+            yield "半截"
+            time.sleep(0.45)
+            yield "后半"
+
+    llm = FakeLlm("不该合成。")
+    kb = _Voice("kb", "笔记。", "笔记里有。")
+    qa = _Partial("qa", "问答。", "后半")
+    registry = Registry([ChatAgent(llm), kb, qa])
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "kb", "confidence": 1},
+                "consultant_1": {"type": "choice", "choice": "qa"},
+            }
+        ]
+    )
+    result = Loop(
+        registry=registry,
+        router=Router(model, registry),
+        model=model,
+        memory=FakeMemory(),
+        history=History(None),
+        agent_timeout=0.2,
+        round_timeout=2,
+    ).handle("查一下")
+
+    assert result.text.startswith("笔记里有。")
+    assert "半截" not in result.text
+    assert "后半" not in result.text
+    assert llm.calls == []
+
+
+def test_failed_route_does_not_reuse_another_conversation():
+    model = FakeModel([_route_answer(), ModelError("连不上模型服务。"), ModelError("连不上模型服务。")])
+    llm = FakeLlm("带伞。")
+    loop = _loop(model, FakeMemory(), llm, history=History(None))
+
+    loop.handle("今天出门吗", conversation="web-a")
+    try:
+        loop.handle("明天呢", conversation="web-b")
+    except ModelError as exc:
+        assert "连不上" in str(exc)
+    else:
+        raise AssertionError("another conversation must not inherit the agent")
+
+    result = loop.handle("后天呢", conversation="web-a")
+
+    assert result.text.startswith("带伞。")
+    assert "选用 chat。" in result.text
+    assert loop.decision_at("chat", 0).message == "今天出门吗"
+    try:
+        loop.decision_at("chat", 1)
+    except IndexError:
+        pass
+    else:
+        raise AssertionError("a reused decision must not be queued")
+    assert len(llm.calls) == 2
+
+
+def test_team_mode_delegates_to_read_only_agents_and_keeps_their_context_narrow():
+    import json
+
+    class _Planner:
+        def __init__(self):
+            self.calls = []
+
+        def answer(self, system, message, tools=None, env=None, remember=True, recall_query="", delegate=None):
+            self.calls.append({"system": system, "message": message, "tools": list(tools or [])})
+            names = [item["function"]["name"] for item in tools or []]
+            assert "Delegate" in names
+            self.refused = delegate(
+                json.dumps({"agent": "wxwork", "task": "发一条", "hypothesis": "能发出去"})
+            )
+            self.self_call = delegate(
+                json.dumps({"agent": "chat", "task": "自己再答", "hypothesis": "主代理能委派自己"})
+            )
+            self.child = delegate(
+                json.dumps(
+                    {
+                        "agent": "kb",
+                        "task": "查 shutdown",
+                        "hypothesis": "笔记里有原因",
+                        "evidence": "用户说子机拉起失败",
+                    }
+                )
+            )
+            for index in range(3):
+                delegate(
+                    json.dumps({"agent": "kb", "task": f"第{index}次", "hypothesis": "还要核对"})
+                )
+            self.blocked = delegate(
+                json.dumps({"agent": "kb", "task": "超额", "hypothesis": "不该再查"})
+            )
+            return "笔记里的原因是 shutdown。"
+
+    planner = _Planner()
+    kb = _Voice("kb", "笔记。", "笔记里有 shutdown。")
+    qa = _Voice("qa", "问答。", "不该并行。")
+    wx = _Voice("wxwork", "企业微信。", "不该发。")
+    wx.consultable = False
+    wx.exclusive = True
+    registry = Registry([ChatAgent(planner), kb, qa, wx])
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "chat", "confidence": 1},
+                "intent": {"type": "choice", "choice": "ask"},
+                "consultant_1": {"type": "choice", "choice": "qa"},
+            }
+        ]
+    )
+    history = History(None)
+    history.append(
+        channel="web",
+        agent_id="chat",
+        user_message="上一句",
+        reply="主代理的私有上下文",
+        shown="主代理的私有上下文",
+        note=None,
+    )
+    result = Loop(
+        registry=registry,
+        router=Router(model, registry),
+        model=model,
+        memory=FakeMemory(),
+        history=history,
+    ).handle("子机为什么拉起", mode="team")
+
+    assert "consultant_1" not in model.calls[0]["questions"]
+    assert "可调用：" in planner.calls[0]["system"]
+    assert "主代理的私有上下文" in planner.calls[0]["message"]
+    assert "不能自动调用" in planner.refused
+    assert "不能委派给自己" in planner.self_call
+    assert planner.blocked == "这一轮的委派已经用完。"
+    assert wx.seen == []
+    assert qa.seen == []
+    assert len(kb.seen) == 4
+    assert all("子任务：" in item and "不要调度其他代理" in item for item in kb.seen)
+    assert all("主代理的私有上下文" not in item for item in kb.seen)
+    assert all("主代理的私有上下文" not in item for item in kb.contexts)
+    assert kb.seen[0].startswith("用户问题：子机为什么拉起")
+    assert result.text.startswith("笔记里的原因是 shutdown。")
+    assert "参考了 kb。" in result.text
+    assert "wxwork" not in result.text.split("参考了", 1)[-1]
+    parts = history.latest().parts
+    assert ("kb", "笔记里有 shutdown。") in parts
+    assert parts[-1][0] == "chat"

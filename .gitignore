@@ -7,3 +7,4 @@ data/
 agent-tools/
 dist/
 *.egg-info/
+.DS_Store

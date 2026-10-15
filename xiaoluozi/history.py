@@ -26,6 +26,8 @@ class SharedTurn:
     reply: str
     shown: str
     note: str | None
+    conversation_id: str = "default"
+    parts: tuple[tuple[str, str], ...] = ()
 
 
 class History:
@@ -48,6 +50,8 @@ class History:
         note: str | None,
         agent_id: str = "",
         turn_id: str | None = None,
+        conversation_id: str = "default",
+        parts: tuple[tuple[str, str], ...] | list[tuple[str, str]] = (),
     ) -> SharedTurn:
         turn = SharedTurn(
             turn_id=turn_id or uuid.uuid4().hex,
@@ -57,6 +61,8 @@ class History:
             reply=reply,
             shown=shown,
             note=note,
+            conversation_id=_conversation_id(conversation_id),
+            parts=_parts(parts),
         )
         with self._lock:
             self._turns.append(turn)
@@ -68,21 +74,33 @@ class History:
         with self._lock:
             return list(self._turns)
 
-    def latest(self) -> SharedTurn | None:
+    def latest(self, conversation_id: str | None = None) -> SharedTurn | None:
         turns = self.turns()
+        if conversation_id is not None:
+            wanted = _conversation_id(conversation_id)
+            turns = [turn for turn in turns if turn.conversation_id == wanted]
         if not turns:
             return None
         return turns[-1]
 
-    def context(self, agent_id: str) -> str:
-        recent = [turn for turn in self.turns() if turn.agent_id == agent_id][-CONTEXT_TURNS:]
+    def context(self, agent_id: str, conversation_id: str = "default") -> str:
+        wanted = _conversation_id(conversation_id)
+        recent = []
+        for turn in self.turns():
+            if turn.conversation_id != wanted:
+                continue
+            own = _own_reply(turn, agent_id)
+            if own is None:
+                continue
+            recent.append((turn, own))
+        recent = recent[-CONTEXT_TURNS:]
         if not recent:
             return ""
         lines = [f"最近对话（{agent_id}）："]
-        for turn in recent:
+        for turn, own in recent:
             label = CHANNEL_LABELS.get(turn.channel, turn.channel)
             lines.append(f"{label} / 用户：{turn.user_message}")
-            lines.append(f"{label} / 小落子：{turn.reply}")
+            lines.append(f"{label} / 小落子：{own}")
         return "\n".join(lines)
 
     def _save_locked(self) -> None:
@@ -97,6 +115,8 @@ class History:
                 "reply": turn.reply,
                 "shown": turn.shown,
                 "note": turn.note,
+                "conversation_id": turn.conversation_id,
+                "parts": [{"agent_id": agent_id, "reply": reply} for agent_id, reply in turn.parts],
             }
             for turn in self._turns
         ]
@@ -134,6 +154,39 @@ def _load(path: Path) -> list[SharedTurn]:
                 reply=reply,
                 shown=shown,
                 note=note if isinstance(note, str) and note else None,
+                conversation_id=_conversation_id(item.get("conversation_id") if isinstance(item.get("conversation_id"), str) else ""),
+                parts=_parts(item.get("parts")),
             )
         )
     return turns
+
+
+def _conversation_id(raw) -> str:
+    text = str(raw or "").strip()
+    return text or "default"
+
+
+def _parts(raw) -> tuple[tuple[str, str], ...]:
+    found = []
+    for item in raw or ():
+        if isinstance(item, dict):
+            agent_id = item.get("agent_id")
+            reply = item.get("reply")
+        elif isinstance(item, (tuple, list)) and len(item) == 2:
+            agent_id, reply = item
+        else:
+            continue
+        if isinstance(agent_id, str) and agent_id.strip() and isinstance(reply, str) and reply.strip():
+            found.append((agent_id.strip(), reply))
+    return tuple(found)
+
+
+def _own_reply(turn: SharedTurn, agent_id: str) -> str | None:
+    for part_id, text in turn.parts:
+        if part_id == agent_id:
+            return text
+    if turn.parts:
+        return None
+    if turn.agent_id == agent_id:
+        return turn.reply
+    return None

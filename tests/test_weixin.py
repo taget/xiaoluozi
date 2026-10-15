@@ -11,8 +11,8 @@ class _ReplyHandle:
     def __init__(self):
         self.messages = []
 
-    def __call__(self, message, channel="web"):
-        self.messages.append((channel, message))
+    def __call__(self, message, channel="web", conversation=""):
+        self.messages.append((channel, message, conversation))
         return Reply(text=f"收到：{message}", saved=True)
 
 
@@ -54,7 +54,7 @@ def test_weixin_text_is_handled_and_sent_back(tmp_path):
     )
 
     assert channel.poll_once() == 1
-    assert handle.messages == [("weixin", "明天还出门吗")]
+    assert handle.messages == [("weixin", "明天还出门吗", "weixin:user-9")]
     assert seen["auth"] == "Bearer bot-secret"
     assert seen["body"]["msg"]["to_user_id"] == "user-9"
     assert seen["body"]["msg"]["context_token"] == "ctx-1"

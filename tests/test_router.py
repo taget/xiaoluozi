@@ -1,6 +1,6 @@
 from tests.fakes import FakeModel, SpyAgent
 from xiaoluozi.registry import Registry
-from xiaoluozi.router import LAYA_MAX_TOKENS, Router, laya_request_tokens, named_agent
+from xiaoluozi.router import LAYA_MAX_TOKENS, Router, laya_request_tokens, mentioned_agent, named_agent
 
 
 def _registry():
@@ -16,6 +16,7 @@ def test_valid_choice_selects_that_agent_and_does_not_run_it(capsys):
 
     assert decision.agent_id == "notes"
     assert decision.reason == "把一句话记成备忘。"
+    assert decision.laya == ""
     assert chat.handled == []
     assert notes.handled == []
     question = model.calls[0]["questions"]["agent_id"]
@@ -116,6 +117,7 @@ def test_none_choice_uses_the_default_agent_and_keeps_the_intent():
     assert decision.agent_id == "chat"
     assert decision.intent == "在提问"
     assert "回退" in decision.reason
+    assert '"choice": "none"' in decision.laya
     assert chat.handled == []
     assert notes.handled == []
 
@@ -166,6 +168,7 @@ def test_a_named_agent_outranks_laya(capsys):
     assert decision.agent_id == "kb"
     assert decision.intent == "在提问"
     assert decision.reason == "用户点名了 kb。"
+    assert decision.laya == ""
     assert "必须选 kb，优先级最高。" in model.calls[0]["state"]
     logged = capsys.readouterr().err
     assert "用户点名 agent_id=kb" in logged
@@ -183,6 +186,7 @@ def test_a_later_positive_cue_wins_over_an_earlier_one():
 
     assert decision.agent_id == "kb"
     assert decision.reason == "用户点名了 kb。"
+    assert decision.laya == ""
 
 
 def test_naming_two_agents_without_a_cue_keeps_laya_choice():
@@ -210,5 +214,129 @@ def test_unknown_agent_id_falls_back_to_chat():
     assert decision.agent_id == "chat"
     assert "回退" in decision.reason
     assert "ghost" in decision.reason
+    assert "ghost" in decision.laya
     assert chat.handled == []
     assert notes.handled == []
+
+
+def test_an_at_mention_skips_laya():
+    registry = Registry(
+        [
+            SpyAgent("chat", "日常对话。"),
+            SpyAgent("wxwork", "企业微信。"),
+            SpyAgent("cvm", "运营。"),
+            SpyAgent("cvm_low_level", "底层。"),
+        ]
+    )
+    model = FakeModel([{"agent_id": {"type": "choice", "choice": "chat"}}])
+    selectable = ["chat", "wxwork", "cvm", "cvm_low_level"]
+
+    decision = Router(model, registry, selectable=selectable).route("@wxwork 查今天的日程")
+
+    assert decision.agent_id == "wxwork"
+    assert decision.reason == "用户用 @ 指定了 wxwork。"
+    assert decision.intent == "没有识别出意图。"
+    assert decision.laya == ""
+    assert model.calls == []
+    assert mentioned_agent("@cvm_low_level 看看拉起", ["cvm", "cvm_low_level"]) == "cvm_low_level"
+    assert mentioned_agent("写给foo@chat", ["chat"]) == ""
+
+
+def test_an_unknown_at_mention_still_asks_laya():
+    registry = Registry([SpyAgent("chat", "日常对话。")])
+    model = FakeModel(
+        [{"agent_id": {"type": "choice", "choice": "chat"}, "intent": {"type": "choice", "choice": "greet"}}]
+    )
+
+    decision = Router(model, registry).route("@ghost 你好")
+
+    assert decision.agent_id == "chat"
+    assert model.calls
+    assert "点名" not in model.calls[0]["state"]
+
+
+def test_low_confidence_falls_back_and_does_not_call_consultants():
+    kb = SpyAgent("kb", "笔记。")
+    kb.consultable = True
+    qa = SpyAgent("qa", "问答。")
+    qa.consultable = True
+    registry = Registry([SpyAgent("chat", "日常。"), kb, qa])
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "kb", "confidence": 0.2},
+                "consultant_1": {"type": "choice", "choice": "qa"},
+            }
+        ]
+    )
+
+    decision = Router(model, registry).route("这是什么")
+
+    assert decision.agent_id == "chat"
+    assert decision.consultants == ()
+    assert decision.reason == "把握只有 0.2，已回退到 chat。"
+
+
+def test_read_only_consultants_stay_and_a_side_effect_primary_runs_alone():
+    kb = SpyAgent("kb", "笔记。")
+    kb.consultable = True
+    qa = SpyAgent("qa", "问答。")
+    qa.consultable = True
+    wxwork = SpyAgent("wxwork", "企业微信。")
+    wxwork.exclusive = True
+    registry = Registry([SpyAgent("chat", "日常。"), kb, qa, wxwork])
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "kb", "confidence": 0.9},
+                "consultant_1": {"type": "choice", "choice": "qa"},
+                "consultant_2": {"type": "choice", "choice": "qa"},
+            }
+        ]
+    )
+
+    decision = Router(model, registry).route("笔记里怎么说")
+
+    assert decision.agent_id == "kb"
+    assert decision.consultants == ("qa",)
+    criteria = model.calls[0]["questions"]["consultant_1"]["criteria"]
+    assert "qa" in criteria
+    assert "wxwork" not in criteria
+    assert criteria["none"] == "不需要其他代理。"
+
+    alone = Router(
+        FakeModel(
+            [
+                {
+                    "agent_id": {"type": "choice", "choice": "wxwork", "confidence": 0.9},
+                    "consultant_1": {"type": "choice", "choice": "kb"},
+                }
+            ]
+        ),
+        registry,
+    ).route("发一条消息")
+
+    assert alone.agent_id == "wxwork"
+    assert alone.consultants == ()
+
+
+def test_team_routing_does_not_ask_for_consultants():
+    kb = SpyAgent("kb", "笔记。")
+    kb.consultable = True
+    qa = SpyAgent("qa", "问答。")
+    qa.consultable = True
+    registry = Registry([SpyAgent("chat", "日常。"), kb, qa])
+    model = FakeModel(
+        [
+            {
+                "agent_id": {"type": "choice", "choice": "kb", "confidence": 0.9},
+                "consultant_1": {"type": "choice", "choice": "qa"},
+            }
+        ]
+    )
+
+    decision = Router(model, registry).route("笔记里怎么说", team=True)
+
+    assert decision.agent_id == "kb"
+    assert decision.consultants == ()
+    assert "consultant_1" not in model.calls[0]["questions"]

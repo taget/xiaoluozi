@@ -8,7 +8,7 @@ from xiaoluozi.registry import Registry
 from xiaoluozi.router import Router
 from xiaoluozi.skills import SkillCatalog
 from xiaoluozi.config import DEFAULT_TOOL_MAX_ROUNDS, Settings
-from xiaoluozi.tools import finish_answer, run_tool
+from xiaoluozi.tools import DELEGATE_SPEC, finish_answer, run_tool, search_public
 from tests.fakes import FakeMemory, FakeModel
 
 
@@ -114,6 +114,34 @@ def test_a_new_agent_only_receives_the_env_keys_it_names(tmp_path):
     assert result == "extra-secret"
 
 
+def test_search_formats_a_public_result(monkeypatch):
+    def fake(query):
+        assert query == "落子"
+        return {
+            "Heading": "落子",
+            "AbstractText": "围棋术语。",
+            "AbstractURL": "https://example.test/luozi",
+            "RelatedTopics": [{"Text": "相关条目", "FirstURL": "https://example.test/rel"}],
+        }
+
+    monkeypatch.setattr("xiaoluozi.tools._search_get", fake)
+    result = run_tool("Search", json.dumps({"query": "落子"}))
+
+    assert "围棋术语。" in result
+    assert "https://example.test/luozi" in result
+    assert "相关条目" in result
+
+
+def test_search_reports_empty_query_failure_and_no_result():
+    assert search_public("  ") == "检索词是空的。"
+    assert search_public("落子", get=lambda query: {}) == "没有查到公开结果。"
+
+    def broken(query):
+        raise OSError("down")
+
+    assert search_public("落子", get=broken) == "检索失败。"
+
+
 def test_yunxiao_ops_allows_bash():
     skill = SkillCatalog().load(("yunxiao-ops",))[0]
     assert skill.allowed_tools == ("Bash",)
@@ -136,6 +164,43 @@ def test_tool_call_runs_and_the_result_returns_to_the_model():
     assert follow[1]["tool_calls"][0]["function"]["name"] == "Bash"
     assert follow[2]["role"] == "tool"
     assert follow[2]["content"] == "落子"
+
+
+def test_delegate_uses_the_callback():
+    seen = []
+
+    def delegate(arguments):
+        seen.append(arguments)
+        return "笔记里有。"
+
+    script = _Script(
+        [
+            _Response(
+                _Message(
+                    tool_calls=[
+                        _ToolCall(
+                            "call-1",
+                            "Delegate",
+                            json.dumps({"agent": "kb", "task": "查笔记", "hypothesis": "笔记里有原因"}),
+                        )
+                    ]
+                )
+            ),
+            _Response(_Message("综合后的答复。")),
+        ]
+    )
+
+    assert (
+        finish_answer(
+            script,
+            [{"role": "user", "content": "查一下"}],
+            [DELEGATE_SPEC],
+            delegate=delegate,
+        )
+        == "综合后的答复。"
+    )
+    assert "kb" in seen[0]
+    assert script.calls[1]["messages"][2]["content"] == "笔记里有。"
 
 
 def test_text_reply_does_not_run_a_tool():

@@ -9,6 +9,7 @@ FALLBACK_ID = "chat"
 NONE_ID = "none"
 INTENT_UNKNOWN = "没有识别出意图。"
 LAYA_MAX_TOKENS = 8192
+LOW_CONFIDENCE = 0.5
 _RECALL_HEAD = "相关记忆："
 _EARLIER_OMITTED = "（更早的上下文已省略。）"
 _REST_OMITTED = "（其余上下文已省略。）"
@@ -34,10 +35,21 @@ _TOKEN = re.compile(
 
 
 class RoutingDecision:
-    def __init__(self, agent_id: str, reason: str, intent: str = INTENT_UNKNOWN):
+    def __init__(
+        self,
+        agent_id: str,
+        reason: str,
+        intent: str = INTENT_UNKNOWN,
+        laya: str = "",
+        consultants: tuple[str, ...] | list[str] = (),
+        confidence: float | None = None,
+    ):
         self.agent_id = agent_id
         self.reason = reason
         self.intent = intent
+        self.laya = laya
+        self.consultants = tuple(consultants)
+        self.confidence = confidence
 
 
 class Router:
@@ -48,15 +60,22 @@ class Router:
         self._registry = registry
         self._default_agent = default_agent or FALLBACK_ID
         self._selectable = selectable
+        self.last_call = None
 
-    def route(self, message: str, context: str = "") -> RoutingDecision:
+    def route(self, message: str, context: str = "", *, team: bool = False) -> RoutingDecision:
+        self.last_call = None
         agents = self._agents()
         if not agents:
             return _decide(self._default_agent, "没有其他代理可选。", "没有可启用的代理。")
+        agent_ids = [agent_id for agent_id, _description in agents]
+        mentioned = mentioned_agent(message, agent_ids)
+        if mentioned:
+            logger.info("用户用 @ 指定 agent_id=%s，不再问 laya。", mentioned)
+            return _decide(mentioned, f"用户用 @ 指定了 {mentioned}。", "")
         criteria = {agent_id: description for agent_id, description in agents}
         criteria[NONE_ID] = "没有合适的代理。"
         logger.info("路由候选 %s", "、".join(agent_id for agent_id, _description in agents))
-        named = named_agent(message, [agent_id for agent_id, _description in agents])
+        named = named_agent(message, agent_ids)
         shown = message
         if named:
             shown = f"{message}\n（点名：必须选 {named}，优先级最高。）"
@@ -73,8 +92,44 @@ class Router:
                 "criteria": dict(INTENTS),
             },
         }
+        consultable = self._consultable_ids(agent_ids)
+        exclusive = self._exclusive_ids(agent_ids)
+        if consultable and not team:
+            pool = {agent_id: criteria[agent_id] for agent_id in consultable}
+            pool[NONE_ID] = "不需要其他代理。"
+            guide = "这句话是否还需要一个只读代理补充材料？没有就选 none。不要选主代理，也不要选会发消息或改数据的代理。"
+            questions["consultant_1"] = {"type": "choice", "instructions": guide, "criteria": pool}
+            questions["consultant_2"] = {"type": "choice", "instructions": guide, "criteria": dict(pool)}
         answers = self._model.decide(fit_laya_state(shown, context, agents, questions), questions)
-        return decision_from_answers(answers, criteria, self._default_agent, named=named)
+        self.last_call = {
+            "question": message,
+            "named": named,
+            "agents": agent_ids,
+            "answers": answers,
+        }
+        decision = decision_from_answers(
+            answers,
+            criteria,
+            self._default_agent,
+            named=named,
+            consultable=consultable,
+            exclusive=exclusive,
+        )
+        if team:
+            decision.consultants = ()
+        return decision
+
+    def enabled(self) -> list[tuple[str, str]]:
+        return self._agents()
+
+    def _consultable_ids(self, agent_ids: list[str]) -> tuple[str, ...]:
+        return tuple(agent_id for agent_id in agent_ids if self._flag(agent_id, "consultable"))
+
+    def _exclusive_ids(self, agent_ids: list[str]) -> tuple[str, ...]:
+        return tuple(agent_id for agent_id in agent_ids if self._flag(agent_id, "exclusive"))
+
+    def _flag(self, agent_id: str, name: str) -> bool:
+        return bool(getattr(self._registry.get(agent_id), name, False))
 
     def _agents(self) -> list[tuple[str, str]]:
         listing = self._registry.listing()
@@ -247,6 +302,19 @@ def _suffix(text: str, budget: int) -> str:
     return cut.lstrip()
 
 
+_AT = re.compile(r"(?<![A-Za-z0-9_])@([A-Za-z][A-Za-z0-9_-]*)")
+
+
+def mentioned_agent(message: str, agent_ids: list[str]) -> str:
+    """First enabled id written as @id. Empty when the mention is not enabled."""
+    enabled = {agent_id.lower(): agent_id for agent_id in agent_ids}
+    for match in _AT.finditer(message or ""):
+        agent_id = enabled.get(match.group(1).lower())
+        if agent_id:
+            return agent_id
+    return ""
+
+
 def named_agent(message: str, agent_ids: list[str]) -> str:
     """Enabled id the user named. A later positive cue wins. Empty when none is named."""
     enabled = {agent_id.lower(): agent_id for agent_id in agent_ids}
@@ -280,24 +348,79 @@ def named_agent(message: str, agent_ids: list[str]) -> str:
 
 
 def decision_from_answers(
-    answers, criteria: dict[str, str], default_agent: str = FALLBACK_ID, named: str = ""
+    answers,
+    criteria: dict[str, str],
+    default_agent: str = FALLBACK_ID,
+    named: str = "",
+    consultable: tuple[str, ...] | list[str] = (),
+    exclusive: tuple[str, ...] | list[str] = (),
 ) -> RoutingDecision:
     raw = answers if isinstance(answers, str) else json.dumps(answers, ensure_ascii=False)
     intent = _intent_label(answers)
     if named and named in criteria:
         return _decide(named, f"用户点名了 {named}。", raw, intent)
+    confidence = _confidence(answers)
+    if confidence is not None and confidence < LOW_CONFIDENCE:
+        shown = f"{confidence:g}"
+        return _decide(
+            default_agent,
+            f"把握只有 {shown}，已回退到 {default_agent}。",
+            raw,
+            intent,
+            laya=raw,
+            confidence=confidence,
+        )
     choice = _choice(answers)
     if choice is None or choice == NONE_ID:
-        return _decide(default_agent, f"没有合适的代理，已回退到 {default_agent}。", raw, intent)
+        return _decide(default_agent, f"没有合适的代理，已回退到 {default_agent}。", raw, intent, laya=raw)
     if choice not in criteria:
-        return _decide(default_agent, f"未知代理 {choice}，已回退到 {default_agent}。", raw, intent)
-    return _decide(choice, criteria[choice], raw, intent)
+        return _decide(default_agent, f"未知代理 {choice}，已回退到 {default_agent}。", raw, intent, laya=raw)
+    helpers = _consultants(answers, criteria, consultable, exclusive, choice)
+    return _decide(choice, criteria[choice], raw, intent, consultants=helpers, confidence=confidence)
 
 
 def _choice(answers):
     if not isinstance(answers, dict):
         return None
     item = answers.get("agent_id")
+    if not isinstance(item, dict):
+        return None
+    choice = item.get("choice")
+    if not isinstance(choice, str) or not choice.strip():
+        return None
+    return choice.strip()
+
+
+def _confidence(answers) -> float | None:
+    if not isinstance(answers, dict):
+        return None
+    item = answers.get("agent_id")
+    if not isinstance(item, dict):
+        return None
+    score = item.get("confidence")
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        return None
+    return float(score)
+
+
+def _consultants(answers, criteria: dict[str, str], consultable, exclusive, primary: str) -> tuple[str, ...]:
+    if primary in exclusive:
+        return ()
+    allowed = set(consultable)
+    found: list[str] = []
+    for key in ("consultant_1", "consultant_2"):
+        choice = _named_choice(answers, key)
+        if choice in {None, "", NONE_ID, primary} or choice not in allowed or choice not in criteria:
+            continue
+        if choice not in found:
+            found.append(choice)
+    return tuple(found[:2])
+
+
+def _named_choice(answers, key: str) -> str | None:
+    if not isinstance(answers, dict):
+        return None
+    item = answers.get(key)
     if not isinstance(item, dict):
         return None
     choice = item.get("choice")
@@ -318,6 +441,21 @@ def _intent_label(answers) -> str:
     return INTENTS.get(choice.strip(), INTENT_UNKNOWN)
 
 
-def _decide(agent_id: str, reason: str, raw: str, intent: str = INTENT_UNKNOWN) -> RoutingDecision:
-    logger.info("路由决定 agent_id=%s intent=%s reason=%s raw=%s", agent_id, intent, reason, raw)
-    return RoutingDecision(agent_id, reason, intent)
+def _decide(
+    agent_id: str,
+    reason: str,
+    raw: str,
+    intent: str = INTENT_UNKNOWN,
+    laya: str = "",
+    consultants: tuple[str, ...] = (),
+    confidence: float | None = None,
+) -> RoutingDecision:
+    logger.info(
+        "路由决定 agent_id=%s consultants=%s intent=%s reason=%s raw=%s",
+        agent_id,
+        ",".join(consultants),
+        intent,
+        reason,
+        raw,
+    )
+    return RoutingDecision(agent_id, reason, intent, laya, consultants, confidence)
