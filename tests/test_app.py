@@ -65,6 +65,8 @@ def test_page_loads_in_chinese_without_knowing_agents():
     assert "xiaoluozi.talk" in text
     assert "conversation: talkId()" in text
     assert "团队" in text
+    assert "技能" in text
+    assert "服务" in text
     assert 'mode: pinned === "team" ? "team" : ""' in text
     assert text.index('id="roster"') < text.index('id="thread"')
     assert text.index('id="thread"') < text.index('id="pick"')
@@ -93,8 +95,14 @@ def test_status_reports_model_missing():
 
 
 def test_agents_endpoint_lists_the_enabled_roster():
-    registry = Registry([SpyAgent("chat", "日常对话。"), SpyAgent("wxwork", "企业微信。")])
+    chat = SpyAgent("chat", "日常对话。")
+    chat.skill_ids = ("search",)
+    wxwork = SpyAgent("wxwork", "企业微信。")
+    wxwork.skill_ids = ("wecom",)
+    wxwork.connector_ids = ("wecom",)
+    registry = Registry([chat, wxwork])
     loop = StubLoop()
+    loop.registry = registry
     loop.router = Router(FakeModel([]), registry, default_agent="chat", selectable=["chat", "wxwork"])
     client = TestClient(create_app(loop=loop, model_configured=True))
 
@@ -103,8 +111,20 @@ def test_agents_endpoint_lists_the_enabled_roster():
     assert response.status_code == 200
     assert response.json() == {
         "agents": [
-            {"id": "chat", "description": "日常对话。", "default": True},
-            {"id": "wxwork", "description": "企业微信。", "default": False},
+            {
+                "id": "chat",
+                "description": "日常对话。",
+                "default": True,
+                "skills": ["search"],
+                "services": [],
+            },
+            {
+                "id": "wxwork",
+                "description": "企业微信。",
+                "default": False,
+                "skills": ["wecom"],
+                "services": ["wecom"],
+            },
         ]
     }
 

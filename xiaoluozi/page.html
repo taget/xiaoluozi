@@ -7,36 +7,49 @@
   <link rel="icon" href="/favicon.ico" sizes="any">
   <style>
     :root {
-      --paper: #f6f1e8;
-      --sheet: #fffdf8;
-      --ink: #241c16;
-      --muted: #6f655b;
-      --line: #e3d9cc;
-      --seal: #8f3228;
-      --seal-ink: #fff8f2;
-      --warn-bg: #f4ead0;
-      --warn-ink: #6a4b16;
-      --fail-bg: #f8e6e1;
-      --fail-ink: #6e2e26;
-      --mine-bg: #f6ddd4;
-      --mine-ink: #4e241c;
-      --mine-line: #e7c3b6;
-      --agent-bg: #e5eef3;
-      --agent-ink: #1c2830;
-      --agent-line: #d0dee6;
-      --shadow: 0 18px 50px rgba(60, 40, 20, 0.08);
+      --bg: #0b1116;
+      --sheet: #121a22;
+      --ink: #e8eef3;
+      --muted: #93a4b3;
+      --line: #243140;
+      --accent: #3dcaa5;
+      --accent-ink: #06241c;
+      --seal: var(--accent);
+      --seal-ink: var(--accent-ink);
+      --warn-bg: #2a2416;
+      --warn-ink: #e6c98a;
+      --fail-bg: #2a1818;
+      --fail-ink: #f0b4ae;
+      --mine-bg: #132824;
+      --mine-ink: #d7f3ea;
+      --mine-line: #1f4a40;
+      --agent-bg: #18222c;
+      --agent-ink: #e4ebf1;
+      --agent-line: #2a3a48;
+      --mono: "SF Mono", "Menlo", "Consolas", monospace;
+      --sans: "SF Pro Text", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
     }
 
     * { box-sizing: border-box; }
+
+    html { color-scheme: dark; }
 
     body {
       margin: 0;
       min-height: 100vh;
       color: var(--ink);
-      background:
-        radial-gradient(ellipse at top, #fbf7f0 0%, var(--paper) 55%, #ebe3d6 100%);
-      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      background-color: var(--bg);
+      background-image:
+        linear-gradient(rgba(61, 202, 165, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(61, 202, 165, 0.045) 1px, transparent 1px);
+      background-size: 1.5rem 1.5rem;
+      font-family: var(--sans);
       line-height: 1.5;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
 
     .desk {
@@ -48,14 +61,14 @@
 
     .stage {
       display: grid;
-      grid-template-columns: 13rem minmax(0, 40rem);
+      grid-template-columns: 16.5rem minmax(0, 40rem);
       justify-content: center;
       align-items: start;
       gap: 1rem;
     }
 
     .stage:not(:has(#chain[hidden])) {
-      grid-template-columns: 13rem minmax(0, 40rem) minmax(14rem, 20rem);
+      grid-template-columns: 16.5rem minmax(0, 40rem) minmax(14rem, 20rem);
     }
 
     .talk {
@@ -74,58 +87,122 @@
       padding: 0.85rem 0.75rem;
       background: var(--sheet);
       border: 1px solid var(--line);
-      border-radius: 0.9rem;
-      box-shadow: var(--shadow);
+      border-radius: 0.5rem;
     }
 
-    .roster h2 {
+    .roster h2,
+    .kicker {
       margin: 0 0 0.65rem;
-      font-size: 0.78rem;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      font-weight: 600;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      color: var(--accent);
+      font-weight: 500;
     }
+
+    .kicker { margin: 0 0 0.2rem; }
 
     .roster ul {
       list-style: none;
       margin: 0;
       padding: 0;
       display: grid;
-      gap: 0.35rem;
+      gap: 0.2rem;
     }
 
     button.pick {
       display: grid;
       width: 100%;
-      gap: 0.15rem;
+      gap: 0.28rem;
       text-align: left;
       border: 1px solid transparent;
-      border-radius: 0.7rem;
-      padding: 0.5rem 0.6rem;
+      border-radius: 0.35rem;
+      padding: 0.35rem 0.45rem 0.4rem;
       background: transparent;
       color: var(--ink);
       font-size: 0.92rem;
+      font-family: var(--sans);
+    }
+
+    button.pick:hover {
+      border-color: var(--line);
+      background: rgba(61, 202, 165, 0.06);
+    }
+
+    button.pick span.head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.35rem;
     }
 
     button.pick strong {
-      font-size: 0.95rem;
+      color: var(--ink);
+      font-size: 0.88rem;
+      letter-spacing: 0.02em;
     }
 
-    button.pick span {
+    button.pick span.about {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
       color: var(--muted);
-      font-size: 0.75rem;
-      line-height: 1.35;
+      font-size: 0.68rem;
+      line-height: 1.3;
+    }
+
+    button.pick span.chips {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    button.pick span.kind {
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+    }
+
+    button.pick span.chip {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      line-height: 1.2;
+      padding: 0.1rem 0.35rem;
+      border-radius: 0.2rem;
+      border: 1px solid rgba(61, 202, 165, 0.55);
+      background: rgba(61, 202, 165, 0.18);
+      color: #e7fff6;
+    }
+
+    button.pick span.chips.service span.kind { color: #9ec5d8; }
+
+    button.pick span.chips.service span.chip {
+      border-color: rgba(158, 197, 216, 0.55);
+      background: rgba(158, 197, 216, 0.16);
+      color: #e7f3f8;
+    }
+
+    button.pick span.chip.empty {
+      border-color: var(--line);
+      background: transparent;
+      color: var(--muted);
     }
 
     button.pick em {
       font-style: normal;
-      color: var(--seal);
-      font-size: 0.72rem;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.06em;
     }
 
     button.pick[aria-pressed="true"] {
-      background: var(--mine-bg);
-      border-color: var(--mine-line);
+      background: rgba(61, 202, 165, 0.1);
+      border-color: var(--accent);
+      box-shadow: inset 2px 0 0 var(--accent);
     }
 
     header {
@@ -137,25 +214,25 @@
     }
 
     .seal {
-      width: 3.1rem;
-      height: 3.1rem;
+      width: 2.75rem;
+      height: 2.75rem;
       display: grid;
       place-items: center;
       border-radius: 0.35rem;
-      background: var(--seal);
-      color: var(--seal-ink);
-      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
-      font-size: 1.7rem;
+      background: rgba(61, 202, 165, 0.08);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      font-family: var(--mono);
+      font-size: 1.15rem;
       letter-spacing: 0;
-      box-shadow: inset 0 0 0 2px rgba(255, 248, 242, 0.35);
     }
 
     h1 {
       margin: 0;
-      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
-      font-size: 1.85rem;
+      font-family: var(--sans);
+      font-size: 1.65rem;
       font-weight: 600;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.06em;
     }
 
     .lede {
@@ -177,8 +254,7 @@
       flex: 1;
       background: var(--sheet);
       border: 1px solid var(--line);
-      border-radius: 1rem;
-      box-shadow: var(--shadow);
+      border-radius: 0.5rem;
       padding: 1.1rem 1rem 0.9rem;
       display: flex;
       flex-direction: column;
@@ -218,14 +294,14 @@
 
     .who {
       margin: 0;
-      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", sans-serif;
-      font-size: 0.72rem;
+      font-family: var(--mono);
+      font-size: 0.68rem;
       letter-spacing: 0.08em;
       color: var(--muted);
     }
 
-    .mine .who { color: var(--seal); }
-    .agent .who { color: #3d5c6e; }
+    .mine .who { color: var(--accent); }
+    .agent .who { color: #8eb4c9; }
 
     .said, .pending, .fail {
       margin: 0;
@@ -235,11 +311,11 @@
 
     .said {
       padding: 0.62rem 0.85rem;
-      border-radius: 1.05rem 1.05rem 0.28rem 1.05rem;
+      border-radius: 0.35rem;
       background: var(--mine-bg);
       color: var(--mine-ink);
       border: 1px solid var(--mine-line);
-      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      font-family: var(--sans);
       font-size: 0.98rem;
       font-weight: 500;
       line-height: 1.55;
@@ -248,11 +324,11 @@
     .reply {
       margin: 0;
       padding: 0.7rem 0.9rem;
-      border-radius: 1.05rem 1.05rem 1.05rem 0.28rem;
+      border-radius: 0.35rem;
       background: var(--agent-bg);
       color: var(--agent-ink);
       border: 1px solid var(--agent-line);
-      font-family: "Songti SC", "Noto Serif SC", "Source Han Serif SC", "PMingLiU", serif;
+      font-family: var(--sans);
       font-size: 1.05rem;
       line-height: 1.7;
       word-break: break-word;
@@ -277,7 +353,7 @@
     .reply h2,
     .reply h3,
     .reply h4 {
-      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
+      font-family: var(--sans);
       font-weight: 600;
       line-height: 1.35;
     }
@@ -296,17 +372,18 @@
     .reply a { color: var(--seal); }
 
     .reply code {
-      font-family: "SF Mono", "Menlo", "Consolas", monospace;
+      font-family: var(--mono);
       font-size: 0.88em;
-      background: #fffdf8;
+      background: #0d141b;
       padding: 0.05em 0.35em;
       border-radius: 0.3rem;
     }
 
     .reply pre {
       overflow-x: auto;
-      background: #fffdf8;
-      border-radius: 0.65rem;
+      background: #0d141b;
+      border: 1px solid var(--line);
+      border-radius: 0.35rem;
       padding: 0.75rem 0.85rem;
       font-family: "SF Mono", "Menlo", "Consolas", monospace;
     }
@@ -325,7 +402,7 @@
       display: block;
       margin-bottom: 0.35rem;
       color: var(--muted);
-      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", sans-serif;
+      font-family: var(--mono);
       font-size: 0.72rem;
       letter-spacing: 0.04em;
     }
@@ -373,8 +450,8 @@
     .open-app {
       margin: 0.35rem 0.4rem 0.15rem 0;
       padding: 0.28rem 0.75rem;
-      border: 1px solid var(--seal);
-      border-radius: 999px;
+      border: 1px solid var(--accent);
+      border-radius: 0.35rem;
       background: transparent;
       color: var(--seal);
       font-size: 0.86rem;
@@ -392,8 +469,7 @@
       overflow: auto;
       background: var(--sheet);
       border: 1px solid var(--line);
-      border-radius: 1rem;
-      box-shadow: var(--shadow);
+      border-radius: 0.5rem;
       padding: 0.9rem 0.95rem 1rem;
     }
 
@@ -401,8 +477,11 @@
 
     .chain h2 {
       margin: 0;
-      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
-      font-size: 1.15rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
       font-weight: 600;
     }
 
@@ -436,7 +515,7 @@
       height: 0.62rem;
       border-radius: 50%;
       background: var(--seal);
-      box-shadow: 0 0 0 3px rgba(143, 50, 40, 0.16);
+      box-shadow: 0 0 0 3px rgba(61, 202, 165, 0.16);
     }
 
     .chain li:not(:last-child)::after {
@@ -446,7 +525,7 @@
       top: 1.15rem;
       bottom: 0.15rem;
       width: 2px;
-      background: #d9c7b4;
+      background: #2c4252;
     }
 
     .chain strong {
@@ -466,19 +545,19 @@
 
     .agent .pending {
       padding: 0.62rem 0.85rem;
-      border-radius: 1.05rem 1.05rem 1.05rem 0.28rem;
+      border-radius: 0.35rem;
       background: var(--agent-bg);
-      color: #5d7380;
+      color: var(--muted);
       border: 1px solid var(--agent-line);
-      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
+      font-family: var(--sans);
     }
 
     .fail {
       padding: 0.65rem 0.75rem;
-      border-radius: 1.05rem 1.05rem 1.05rem 0.28rem;
+      border-radius: 0.35rem;
       background: var(--fail-bg);
       color: var(--fail-ink);
-      font-family: "Songti SC", "Noto Serif SC", "PMingLiU", serif;
+      font-family: var(--sans);
     }
 
     .note {
@@ -501,7 +580,7 @@
       border: 1px solid var(--line);
       background-color: var(--sheet);
       color: var(--ink);
-      border-radius: 999px;
+      border-radius: 0.35rem;
       padding: 0.75rem 0.85rem;
       font: inherit;
       font-size: 0.92rem;
@@ -514,8 +593,8 @@
     }
 
     select:focus {
-      outline: 2px solid rgba(143, 50, 40, 0.35);
-      border-color: var(--seal);
+      outline: 2px solid rgba(61, 202, 165, 0.45);
+      border-color: var(--accent);
     }
 
     select:disabled {
@@ -535,25 +614,28 @@
       flex: 1;
       min-width: 0;
       border: 1px solid var(--line);
-      background: #fff;
+      background: #0e161d;
       color: var(--ink);
-      border-radius: 999px;
+      border-radius: 0.35rem;
       padding: 0.75rem 1rem;
       font: inherit;
       font-size: 1rem;
     }
 
+    input::placeholder { color: #6d7f8d; }
+
     input:focus {
-      outline: 2px solid rgba(143, 50, 40, 0.35);
-      border-color: var(--seal);
+      outline: 2px solid rgba(61, 202, 165, 0.45);
+      border-color: var(--accent);
     }
 
     button {
       border: 0;
-      border-radius: 999px;
+      border-radius: 0.35rem;
       padding: 0.75rem 1.1rem;
-      background: var(--seal);
-      color: var(--seal-ink);
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 600;
       font: inherit;
       font-size: 1rem;
       cursor: pointer;
@@ -570,12 +652,24 @@
       .stage,
       .stage:not(:has(#chain[hidden])) { grid-template-columns: 1fr; }
       select { flex-basis: 7.2rem; max-width: 7.2rem; padding-left: 0.7rem; padding-right: 0.55rem; }
+      #send { padding-left: 0.85rem; padding-right: 0.85rem; }
       .roster { position: static; max-height: none; }
       .roster ul { display: flex; overflow-x: auto; }
-      button.pick { width: auto; min-width: 8.5rem; }
+      button.pick { width: auto; min-width: 11rem; }
       .chain { position: static; max-height: none; }
-      .sheet { min-height: 70vh; border-radius: 0.8rem; }
+      .sheet { min-height: 0; border-radius: 0.5rem; }
+      #thread { min-height: 18rem; }
+      form {
+        position: sticky;
+        bottom: 0;
+        background: var(--sheet);
+        padding-bottom: 0.25rem;
+      }
       h1 { font-size: 1.6rem; }
+    }
+
+    @media (max-width: 420px) {
+      select { flex-basis: 4.75rem; max-width: 4.75rem; }
     }
   </style>
 </head>
@@ -590,6 +684,7 @@
     <header>
       <div class="seal" aria-hidden="true">落</div>
       <div>
+        <p class="kicker">工作台</p>
         <h1>小落子</h1>
         <p class="lede">一句话进来，我回你一句。</p>
         <p id="channel-note" class="lede" hidden></p>
@@ -713,6 +808,7 @@
         const option = document.createElement("option");
         option.value = item.id;
         option.textContent = item.id;
+        option.title = linkLine("技能", item.skills) + "\n" + linkLine("服务", item.services);
         pick.append(option);
       }
       markSelected(pinned);
@@ -737,14 +833,18 @@
           button.dataset.id = item.id;
           const name = document.createElement("strong");
           name.textContent = item.id;
-          const about = document.createElement("span");
-          about.textContent = item.description || "";
-          button.append(name, about);
+          const head = document.createElement("span");
+          head.className = "head";
+          head.append(name);
           if (item.default) {
             const tag = document.createElement("em");
             tag.textContent = "默认";
-            button.append(tag);
+            head.append(tag);
           }
+          const about = document.createElement("span");
+          about.className = "about";
+          about.textContent = item.description || "";
+          button.append(head, chipRow("技能", item.skills, "skill"), chipRow("服务", item.services, "service"), about);
           button.addEventListener("click", () => chooseAgent(item.id));
           entry.append(button);
           list.append(entry);
@@ -755,6 +855,29 @@
         list.replaceChildren();
         fillMenu();
       }
+    }
+
+    function linkLine(label, values) {
+      const items = (values || []).filter(Boolean);
+      return label + "：" + (items.length ? items.join("、") : "无");
+    }
+
+    function chipRow(label, values, tone) {
+      const row = document.createElement("span");
+      row.className = "chips" + (tone ? " " + tone : "");
+      const kind = document.createElement("span");
+      kind.className = "kind";
+      kind.textContent = label;
+      row.append(kind);
+      const items = (values || []).filter(Boolean);
+      const shown = items.length ? items : ["无"];
+      for (const item of shown) {
+        const chip = document.createElement("span");
+        chip.className = item === "无" ? "chip empty" : "chip";
+        chip.textContent = item;
+        row.append(chip);
+      }
+      return row;
     }
 
     function chooseAgent(id) {

@@ -18,6 +18,7 @@ class CvmAgent:
 返回内容如果有表格图表等，使用 html 格式渲染好，不要直接返回 markdown 格式。
 '''
     skill_ids = ("yunxiao-ops",)
+    service_ids = ("云霄",)
     env_keys = ("YUNXIAO_SECRET_ID", "YUNXIAO_SECRET_KEY", "YUNXIAO_API_URL")
     exclusive = True
 

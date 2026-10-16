@@ -58,6 +58,7 @@ class KnotAgent:
     id = ""
     description = ""
     skill_ids = ()
+    service_ids = ("Knot",)
     env_keys = ("KNOT_API_TOKEN",)
 
     def __init__(self, llm, skills=(), env=None, opener=None, spec=None):

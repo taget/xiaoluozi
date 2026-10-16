@@ -23,6 +23,7 @@ class CvmLowLevelAgent:
         "检索结果里没有的就说知识库里没有。不要编造。"
     )
     skill_ids = ()
+    service_ids = ("Knot",)
     env_keys = ("KNOT_API_TOKEN",)
     remembers = False
     memory_note = "CVM 底层知识库只检索，这一轮不写入记忆。"

@@ -113,10 +113,10 @@ def create_app(
         router = getattr(app.state.loop, "router", None)
         enabled = router.enabled() if router is not None and hasattr(router, "enabled") else []
         default_id = getattr(router, "_default_agent", "") if router is not None else ""
+        registry = getattr(app.state.loop, "registry", None)
         payload = {
             "agents": [
-                {"id": agent_id, "description": description, "default": agent_id == default_id}
-                for agent_id, description in enabled
+                _agent_card(agent_id, description, default_id, registry) for agent_id, description in enabled
             ]
         }
         logger.info("请求 GET /api/agents %s", "、".join(item["id"] for item in payload["agents"]) or "没有")
@@ -174,6 +174,52 @@ def create_app(
         return {"opened": True}
 
     return app
+
+
+def _agent_card(agent_id: str, description: str, default_id: str, registry) -> dict:
+    agent = None
+    if registry is not None and hasattr(registry, "get") and agent_id in getattr(registry, "ids", lambda: ())():
+        agent = registry.get(agent_id)
+    return {
+        "id": agent_id,
+        "description": getattr(agent, "description", description) if agent is not None else description,
+        "default": agent_id == default_id,
+        "skills": _skill_names(agent),
+        "services": _service_names(agent),
+    }
+
+
+def _skill_names(agent) -> list[str]:
+    if agent is None:
+        return []
+    loaded = getattr(agent, "_skills", None) or ()
+    names = [getattr(skill, "name", "") for skill in loaded]
+    names = [name for name in names if name]
+    if names:
+        return names
+    return [name for name in getattr(agent, "skill_ids", ()) if name]
+
+
+def _service_names(agent) -> list[str]:
+    if agent is None:
+        return []
+    names: list[str] = []
+    loaded = getattr(agent, "_connectors", None) or ()
+    if loaded:
+        for connector in loaded:
+            _append_name(names, getattr(connector, "id", ""))
+    else:
+        for name in getattr(agent, "connector_ids", ()):
+            _append_name(names, name)
+    for name in getattr(agent, "service_ids", ()):
+        _append_name(names, name)
+    return names
+
+
+def _append_name(names: list[str], name: str) -> None:
+    text = (name or "").strip()
+    if text and text not in names:
+        names.append(text)
 
 
 def _turn_payload(turn) -> dict:
